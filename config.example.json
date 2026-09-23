@@ -13,6 +13,7 @@
   "adminPasswordHash": "",
   "requirePasswordChange": true,
   "protectProcess": true,
+  "netBanAutoLiftMinutes": 60,
   "disableTaskManager": false,
   "autostart": true,
   "complianceAccepted": false,

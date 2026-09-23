@@ -37,6 +37,7 @@ DEFAULTS = {
     "adminPasswordHash": "",       # 由 security.hash_password 生成，迁移时补齐
     "requirePasswordChange": True,
     "protectProcess": True,
+    "netBanAutoLiftMinutes": 60,   # 禁止上网多少分钟后自动放开（0 = 不自动放开）
     "disableTaskManager": False,
     "autostart": True,
     "complianceAccepted": False,

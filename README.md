@@ -127,7 +127,8 @@ cd build
 客户端认这些命令（都从教师端下发）：
 
 `screen_start` `screen_stop` `lock` `unlock` `shutdown` `reboot` `logout`
-`message` `open_url` `open_app` `file_distribute` `screen_broadcast` `net_ban`
+`message` `open_url` `open_app` `file_distribute` `screen_broadcast`
+`net_ban`（白名单模式：断外网但保留控制通道，默认 60 分钟自动放开）
 
 `unlock` 有个说明：Windows 不允许程序替人解锁。客户端只能提示，密码还得人在机器前敲。
 

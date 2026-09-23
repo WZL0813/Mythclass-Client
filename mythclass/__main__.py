@@ -19,6 +19,7 @@ from .api import ServerApi, SocketClient
 from .commands import execute, known_commands
 from .db import RecordStore
 from .monitors import AudioMonitor, FileMonitor, ScreenStreamer
+from . import netban
 from .tray import Tray, make_icon_image
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -42,6 +43,7 @@ class MythclassClient:
 
         self.tray = Tray(self)
         self._stop = threading.Event()
+        self._last_netban_refresh = 0.0
         self.logger = logging.getLogger("mythclass")
 
     # ------------------------------ 日志 ------------------------------
@@ -127,7 +129,7 @@ class MythclassClient:
         request_id = payload.get("requestId") or ""
 
         if command == "screen_start":
-            if not self.screen.running:
+            if not self.screen.alive():
                 self.screen = ScreenStreamer(
                     args.get("fps", self.cfg.get("screenFps", 12)),
                     args.get("quality", self.cfg.get("screenQuality", 60)),
@@ -213,6 +215,20 @@ class MythclassClient:
                     self.api.heartbeat()
             except Exception as err:
                 self.log(f"上报出问题了：{err}", logging.WARNING)
+
+            # 禁网状态下要盯两件事：到点自动放开；服务端 IP 变了刷新放行
+            try:
+                if netban.due_for_auto_lift():
+                    ok, msg = netban.lift()
+                    self.log(f"禁网到点自动放开：{'成功' if ok else '失败'} - {msg}")
+                elif netban.is_active() and time.time() - self._last_netban_refresh > 300:
+                    self._last_netban_refresh = time.time()
+                    ok, msg = netban.refresh_control_ips(config.enabled_servers(self.cfg))
+                    if not ok:
+                        self.log(f"刷新禁网放行地址失败：{msg}", logging.WARNING)
+            except Exception as err:
+                self.log(f"禁网状态检查出错：{err}", logging.WARNING)
+
             self._stop.wait(15)
 
     def _housekeeping_loop(self) -> None:
@@ -307,8 +323,9 @@ class MythclassClient:
             f"机器 ID：{self.client_uid}\n"
             f"服务器：{self.server_url or '（还没连上）'}\n"
             f"状态：{'已连接' if self.connected else '未连接'}\n"
-            f"屏幕流：{'推着呢' if self.screen.running else '关着'}\n"
+            f"屏幕流：{'推着呢' if self.screen.alive() else '关着'}\n"
             f"托盘图标：{self.icon_check()}\n"
+            f"禁网：{netban.describe()}\n"
             f"进程保护：{'开' if self.cfg.get('protectProcess') else '关'}"
             f"（跟班{'在跑' if guard.guardian_running() else '没跑'}）\n"
             f"记录：{self.store.stats()}\n"

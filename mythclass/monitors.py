@@ -203,8 +203,13 @@ class ScreenStreamer:
         self.running = False
         self.frames_sent = 0
 
+    def alive(self) -> bool:
+        """线程真的活着吗。只信 running 会漏掉「线程死于异常」的情况，
+        那时候 running 还是 True，后面每次「开始看」都变成空操作。"""
+        return bool(self._thread and self._thread.is_alive())
+
     def start(self, on_frame: Callable[[dict], None]) -> None:
-        if self.running:
+        if self.alive():
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, args=(on_frame,), name="mythclass-screen", daemon=True)
@@ -224,6 +229,16 @@ class ScreenStreamer:
             return
 
         interval = 1.0 / self.fps
+        try:
+            self._stream(interval, on_frame)
+        finally:
+            # 不管怎么退出，都别留一个假的 running=True
+            self.running = False
+
+    def _stream(self, interval: float, on_frame: Callable[[dict], None]) -> None:
+        import mss
+        from PIL import Image
+
         with mss.mss() as grabber:
             monitor = grabber.monitors[1] if len(grabber.monitors) > 1 else grabber.monitors[0]
             while not self._stop.is_set():

@@ -14,6 +14,8 @@ import tkinter as tk
 import urllib.request
 from pathlib import Path
 
+from . import config, netban
+
 CREATE_NO_WINDOW = 0x08000000
 
 
@@ -148,14 +150,24 @@ def cmd_screen_broadcast(args: dict) -> tuple[bool, str]:
 
 
 def cmd_net_ban(args: dict) -> tuple[bool, str]:
-    """用防火墙规则掐网。要管理员权限。"""
+    """禁网 / 放开。要管理员权限。
+
+    走 netban 的白名单模式：断掉外网，但**留着到服务端那条线**。
+    老实现是一句 netsh 拦掉所有出站，连自己都掐——老师再也发不出「放开上网」，
+    那台机器就只能人到跟前解锁了。
+    """
     enable = str(args.get("enable", "true")).lower() in ("1", "true", "yes", "on")
-    rule = "Mythclass-NetBan"
-    if enable:
-        ok, out = _run(f'netsh advfirewall firewall add rule name="{rule}" dir=out action=block enable=yes')
-        return ok, out or "网络已经掐了"
-    ok, out = _run(f'netsh advfirewall firewall delete rule name="{rule}"')
-    return ok, out or "网络放开了"
+
+    if not enable:
+        return netban.lift()
+
+    servers = config.enabled_servers(config.load())
+    raw_minutes = args.get("minutes")
+    try:
+        minutes = int(str(raw_minutes)) if raw_minutes not in (None, "") else None
+    except ValueError:
+        minutes = None
+    return netban.apply(servers, minutes=minutes)
 
 
 REGISTRY = {
