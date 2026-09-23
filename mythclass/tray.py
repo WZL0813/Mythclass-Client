@@ -17,7 +17,23 @@ from . import config, ui
 
 
 def make_icon_image(size: int = 64):
-    """画一个托盘图标：苔绿底 + 米白 M + 琥珀点"""
+    """托盘图标：用项目 logo 里那个「显示器 + M」，读不到再退回手绘"""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+
+    logo = asset_path("logo-tray.png")
+    if logo.exists():
+        try:
+            return Image.open(logo).convert("RGBA").resize((size, size), Image.LANCZOS)
+        except Exception:
+            pass
+    return _fallback_icon(size)
+
+
+def _fallback_icon(size: int = 64):
+    """兜底手绘：苔绿底 + 米白 M + 琥珀点。logo 丢了也不至于没图标"""
     try:
         from PIL import Image, ImageDraw
     except ImportError:
@@ -26,14 +42,12 @@ def make_icon_image(size: int = 64):
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle([1, 1, size - 2, size - 2], radius=size // 5, fill=(47, 79, 62, 255))
-    # M
     draw.line(
         [(size * 0.24, size * 0.72), (size * 0.24, size * 0.3), (size * 0.5, size * 0.56), (size * 0.76, size * 0.3), (size * 0.76, size * 0.72)],
         fill=(243, 239, 227, 255),
         width=max(2, size // 12),
         joint="curve",
     )
-    # 琥珀点
     r = size * 0.08
     draw.ellipse([size * 0.66 - r, size * 0.74 - r, size * 0.66 + r, size * 0.74 + r], fill=(201, 123, 60, 255))
     return image

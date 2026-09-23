@@ -30,6 +30,8 @@ a = Analysis(
     datas=[
         # 首次运行会把它复制到 %APPDATA%\Mythclass\config.json
         (str(ROOT / 'config.example.json'), '.'),
+        # 托盘图标、关于窗口里的 logo，运行时按 mythclass/assets 找
+        (str(ROOT / 'mythclass' / 'assets'), 'mythclass/assets'),
     ],
     hiddenimports=[
         # 这几个都是写在函数体里、运行时才 import 的，显式点名更保险
@@ -76,5 +78,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,              # 有 .ico 就填路径，没有就用默认
+    icon=str(ROOT / 'build' / 'mythclass.ico'),
 )

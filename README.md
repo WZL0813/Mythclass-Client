@@ -1,4 +1,4 @@
-# Mythclass Client
+<img src="mythclass/assets/logo-mark.png" width="80" alt="Mythclass" />
 
 教室一体机上跑的那个。没主界面，只在托盘露个头。
 

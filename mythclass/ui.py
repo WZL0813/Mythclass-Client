@@ -26,6 +26,19 @@ def _center(window: tk.Tk, width: int, height: int) -> None:
     window.geometry(f"{width}x{height}+{x}+{y}")
 
 
+def _apply_window_icon(window: tk.Tk) -> None:
+    """给窗口装上项目图标。装不上就算了，不影响功能"""
+    try:
+        from .tray import asset_path
+
+        icon_file = asset_path("logo-mark.png")
+        if icon_file.exists():
+            window._logo_icon = tk.PhotoImage(file=str(icon_file))   # 保住引用，不然会被回收
+            window.iconphoto(True, window._logo_icon)
+    except Exception:
+        pass
+
+
 # ================================ 关于 ================================
 
 
@@ -40,11 +53,27 @@ class AboutWindow:
         self.root.resizable(False, False)
         self.root.attributes("-topmost", True)
         _center(self.root, 460, 330)
+        _apply_window_icon(self.root)
         self._build()
 
     def _build(self) -> None:
         pad = tk.Frame(self.root, bg=BG, padx=26, pady=22)
         pad.pack(fill="both", expand=True)
+
+        # 顶上摆 logo
+        try:
+            from PIL import Image, ImageTk
+
+            from .tray import asset_path
+
+            logo_file = asset_path("logo.png")
+            if logo_file.exists():
+                photo = ImageTk.PhotoImage(Image.open(logo_file).resize((88, 88), Image.LANCZOS))
+                holder = tk.Label(pad, image=photo, bg=BG)
+                holder.image = photo      # 同上，引用得留着
+                holder.pack(anchor="w", pady=(0, 8))
+        except Exception:
+            pass
 
         tk.Label(pad, text=__product__, bg=BG, fg=MOSS, font=("Microsoft YaHei", 14, "bold"), wraplength=400, justify="left").pack(anchor="w")
         tk.Label(pad, text=f"v{__version__} / by {__author__}", bg=BG, fg=INK, font=("Microsoft YaHei", 10)).pack(anchor="w", pady=(4, 14))
@@ -112,6 +141,7 @@ class SettingsWindow:
         self.root.configure(bg=BG)
         self.root.attributes("-topmost", True)
         _center(self.root, 620, 640)
+        _apply_window_icon(self.root)
         self.vars: dict[str, tk.Variable] = {}
 
         if not self._ask_password():
