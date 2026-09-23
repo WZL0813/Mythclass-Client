@@ -86,12 +86,12 @@ pip install pyinstaller
 pyinstaller build/mythclass.spec
 ```
 
-产物 `dist/Mythclass.exe`，单文件、无控制台，约 29 MB。
+产物 `dist/MythclassClient.exe`，单文件、无控制台，约 29 MB。
 
 打完自检一句：
 
 ```bash
-dist\Mythclass.exe --status
+dist\MythclassClient.exe --status
 ```
 
 退出码 0、能打印机器 ID 就算成功。

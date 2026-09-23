@@ -19,7 +19,7 @@ from .api import ServerApi, SocketClient
 from .commands import execute, known_commands
 from .db import RecordStore
 from .monitors import AudioMonitor, FileMonitor, ScreenStreamer
-from .tray import Tray
+from .tray import Tray, make_icon_image
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
@@ -282,6 +282,21 @@ class MythclassClient:
         time.sleep(0.5)
         sys.exit(0)
 
+    @staticmethod
+    def icon_check() -> str:
+        """自检：logo 到底读不读得到。
+
+        打包漏带资源时，托盘会在真启动那一刻才炸，查起来很烦；
+        所以 --status 顺手把它验一遍。
+        """
+        try:
+            icon = make_icon_image(64)
+            if not icon:
+                return "没读到（缺 Pillow）"
+            return f"ok {icon.size[0]}x{icon.size[1]}"
+        except Exception as err:
+            return f"出错：{type(err).__name__}: {err}"
+
     def status(self) -> str:
         return (
             f"{__product__} v{__version__}\n"
@@ -289,6 +304,7 @@ class MythclassClient:
             f"服务器：{self.server_url or '（还没连上）'}\n"
             f"状态：{'已连接' if self.connected else '未连接'}\n"
             f"屏幕流：{'推着呢' if self.screen.running else '关着'}\n"
+            f"托盘图标：{self.icon_check()}\n"
             f"记录：{self.store.stats()}\n"
             f"能用命令：{', '.join(known_commands())}"
         )

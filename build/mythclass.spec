@@ -7,7 +7,7 @@
     pip install pyinstaller
     pyinstaller build/mythclass.spec
 
-产物：dist/Mythclass.exe，单文件、无控制台窗口。
+产物：dist/MythclassClient.exe，单文件、无控制台窗口。
 
 两个坑记在这儿，免得下次又踩：
 
@@ -66,7 +66,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Mythclass',
+    name='MythclassClient',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

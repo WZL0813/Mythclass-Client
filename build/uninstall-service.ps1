@@ -32,7 +32,7 @@ schtasks /Delete /TN $guardName /F 2>$null | Out-Null
 
 # 2. 结束进程
 Write-Host '[2/5] 结束进程…'
-Get-Process -Name 'Mythclass' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name 'MythclassClient' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 # 3. 恢复任务管理器
 Write-Host '[3/5] 放开任务管理器…'

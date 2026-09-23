@@ -19,7 +19,7 @@ $guardName   = 'MythclassGuard'
 $clientDir   = Split-Path -Parent $PSScriptRoot          # client/
 $repoDir     = Split-Path -Parent $clientDir             # 仓库根目录
 $installRoot = Join-Path $env:ProgramFiles 'Mythclass'
-$exePath     = Join-Path $installRoot 'Mythclass.exe'
+$exePath     = Join-Path $installRoot 'MythclassClient.exe'
 $devMode     = -not (Test-Path $exePath)
 
 Write-Host ''
@@ -31,7 +31,7 @@ if (-not (Test-Path $installRoot)) {
     New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
 }
 if (-not $devMode) {
-    Copy-Item $exePath (Join-Path $installRoot 'Mythclass.exe') -Force
+    Copy-Item $exePath (Join-Path $installRoot 'MythclassClient.exe') -Force
     Write-Host "[1/5] 已使用已打包的 exe：$exePath"
 } else {
     Write-Host '[1/5] 没找到打包好的 exe，按开发模式装（依赖本机 Python）' -ForegroundColor Yellow

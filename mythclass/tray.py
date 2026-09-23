@@ -8,12 +8,32 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox
 
 from . import __product__, __version__
 from . import config, ui
+
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
+
+def asset_path(name: str) -> Path:
+    """找资源文件。
+
+    源码运行时在 mythclass/assets/ 下；
+    打包成 exe 后 PyInstaller 会把 datas 解到 sys._MEIPASS 里，所以要两处都找。
+    """
+    candidates = [ASSETS_DIR / name]
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        candidates.append(Path(base) / "mythclass" / "assets" / name)
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
 
 
 def make_icon_image(size: int = 64):

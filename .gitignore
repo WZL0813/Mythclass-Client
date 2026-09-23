@@ -6,6 +6,8 @@ venv/
 env/
 
 # 打包产物
+# PyInstaller 的工作目录（build/<name>/），里面全是中间产物，别提交
+build/mythclass/
 dist/
 *.egg-info/
 
