@@ -11,7 +11,7 @@ from tkinter import messagebox, ttk
 
 from . import __author__, __product__, __version__, config, guard, identity
 
-REPO = "https://github.com/WZL0813/Mythclass"
+REPO = "https://github.com/WZL0813/Mythclass-Client"
 
 BG = "#f3efe3"
 INK = "#10160f"

@@ -1,0 +1,23 @@
+# 依赖
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# 打包产物
+dist/
+*.egg-info/
+
+# 配置：只提交 config.example.json
+config.json
+
+# 运行时数据（正常情况下都在 %APPDATA%\Mythclass，这儿兜个底）
+*.db
+client.log
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

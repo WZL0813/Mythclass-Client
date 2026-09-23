@@ -2,6 +2,9 @@
 
 教室一体机上跑的那个。没主界面，只在托盘露个头。
 
+仓库：https://github.com/WZL0813/Mythclass-Client
+服务端与教师端在另一个仓库：[Mythclass](https://github.com/WZL0813/Mythclass)
+
 学生关不掉它——默认开了进程保护和禁用任务管理器。
 
 ---
@@ -91,12 +94,12 @@ pyinstaller build/mythclass.spec
 管理员身份打开 PowerShell：
 
 ```powershell
-cd client\build
+cd build
 .\install-service.ps1      # 装：拷文件、建计划任务、写自启、收紧权限
 .\uninstall-service.ps1    # 卸：停任务、杀进程、放开任务管理器、删目录
 ```
 
-细节看 [docs/客户端安装与自启.md](../docs/客户端安装与自启.md)。
+细节看 [客户端安装与自启](docs/客户端安装与自启.md)。
 
 ---
 
@@ -129,4 +132,4 @@ cd client\build
 
 ---
 
-© 2025 Ryokuryuneko · [AGPL-3.0](../LICENSE)
+© 2025 Ryokuryuneko · [AGPL-3.0](LICENSE)
