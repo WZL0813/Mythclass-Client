@@ -1,6 +1,9 @@
 """客户端配置：读写 %APPDATA%\\Mythclass\\config.json
 
 第一次运行会把 config.example.json 复制过去。之后所有改动都落在那份。
+
+管理员密码**不存明文**，只存 security.py 算出来的带盐哈希。
+老配置里如果有明文 adminPassword，加载时会自动升级成哈希并把明文字段删掉。
 """
 
 from __future__ import annotations
@@ -9,6 +12,8 @@ import json
 import os
 import shutil
 from pathlib import Path
+
+from . import security
 
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Mythclass"
 CONFIG_FILE = APP_DIR / "config.json"
@@ -29,7 +34,7 @@ DEFAULTS = {
             "official": True,
         }
     ],
-    "adminPassword": "admin123",
+    "adminPasswordHash": "",       # 由 security.hash_password 生成，迁移时补齐
     "requirePasswordChange": True,
     "protectProcess": True,
     "disableTaskManager": False,
@@ -46,6 +51,24 @@ DEFAULTS = {
 
 def ensure_dirs() -> None:
     APP_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _migrate_password(cfg: dict) -> bool:
+    """把密码相关字段升级成哈希。返回是否动过（动过就得落盘，别把明文留在文件里）"""
+    changed = False
+
+    plain = cfg.pop("adminPassword", None)
+    if plain is not None:
+        cfg["adminPasswordHash"] = security.hash_password(str(plain))
+        cfg.setdefault("requirePasswordChange", str(plain) == security.DEFAULT_PASSWORD)
+        changed = True
+
+    if not cfg.get("adminPasswordHash"):
+        cfg["adminPasswordHash"] = security.hash_password(security.DEFAULT_PASSWORD)
+        cfg.setdefault("requirePasswordChange", True)
+        changed = True
+
+    return changed
 
 
 def _merge_defaults(data: dict) -> dict:
@@ -72,16 +95,28 @@ def load() -> dict:
         if example.exists():
             shutil.copyfile(example, CONFIG_FILE)
         else:
-            CONFIG_FILE.write_text(json.dumps(DEFAULTS, ensure_ascii=False, indent=2), encoding="utf-8")
+            CONFIG_FILE.write_text(
+                json.dumps(_merge_defaults({"adminPasswordHash": security.hash_password(security.DEFAULT_PASSWORD)}), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         data = {}
-    return _merge_defaults(data)
+
+    migrated = _migrate_password(data)
+    cfg = _merge_defaults(data)
+
+    if migrated:
+        # 升级过就立刻落盘：明文密码不该在硬盘上多躺一秒
+        save(cfg)
+
+    return cfg
 
 
 def save(cfg: dict) -> dict:
     ensure_dirs()
+    _migrate_password(cfg)
     data = _merge_defaults(cfg)
     CONFIG_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return data
@@ -105,3 +140,25 @@ def watch_dirs(cfg: dict) -> list[str]:
         home = Path.home()
         dirs = [str(home / "Desktop"), str(home / "Documents")]
     return [d for d in dirs if Path(d).exists()]
+
+
+# ---------------------------- 管理员密码 ----------------------------
+
+
+def verify_admin_password(cfg: dict, password: str) -> bool:
+    """验管理员密码"""
+    return security.verify_password(str(cfg.get("adminPasswordHash") or ""), password)
+
+
+def set_admin_password(cfg: dict, password: str) -> dict:
+    """换密码。设成默认密码时会重新亮起「该改密码了」的提醒"""
+    cfg["adminPasswordHash"] = security.hash_password(password)
+    cfg["requirePasswordChange"] = password == security.DEFAULT_PASSWORD
+    return cfg
+
+
+def needs_password_change(cfg: dict) -> bool:
+    """密码还是默认的 admin123 就返回 True（设置界面据此显示提醒）"""
+    if cfg.get("requirePasswordChange"):
+        return True
+    return security.verify_password(str(cfg.get("adminPasswordHash") or ""), security.DEFAULT_PASSWORD)

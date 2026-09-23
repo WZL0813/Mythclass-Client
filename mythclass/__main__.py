@@ -246,6 +246,7 @@ class MythclassClient:
 
         # 保护起来
         if self.cfg.get("protectProcess"):
+            guard.clear_stop()        # 这次是正经启动，把「别盯我」的标记清掉
             guard.start_guardian()
         if self.cfg.get("autostart"):
             guard.enable_autostart()
@@ -269,6 +270,9 @@ class MythclassClient:
 
     def shutdown(self) -> None:
         self.log("收工中…")
+        # 先让跟班别盯了，否则它几秒后就把我们拉回来
+        if self.cfg.get("protectProcess"):
+            guard.request_stop()
         self._stop.set()
         self.screen.stop()
         if self.socket:
@@ -305,6 +309,8 @@ class MythclassClient:
             f"状态：{'已连接' if self.connected else '未连接'}\n"
             f"屏幕流：{'推着呢' if self.screen.running else '关着'}\n"
             f"托盘图标：{self.icon_check()}\n"
+            f"进程保护：{'开' if self.cfg.get('protectProcess') else '关'}"
+            f"（跟班{'在跑' if guard.guardian_running() else '没跑'}）\n"
             f"记录：{self.store.stats()}\n"
             f"能用命令：{', '.join(known_commands())}"
         )

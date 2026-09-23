@@ -10,7 +10,7 @@
       "official": true
     }
   ],
-  "adminPassword": "admin123",
+  "adminPasswordHash": "",
   "requirePasswordChange": true,
   "protectProcess": true,
   "disableTaskManager": false,

@@ -1,6 +1,6 @@
 """两个小窗口：关于、设置
 
-设置要密码。默认 admin123，第一次进去会催你改掉。
+设置要密码。默认 admin123，第一次进去会催你改掉；密码存哈希，不存明文。
 """
 
 from __future__ import annotations
@@ -170,7 +170,7 @@ class SettingsWindow:
 
         def confirm(_event=None):
             entered = entry.get()
-            if entered == str(self.cfg.get("adminPassword", "admin123")):
+            if config.verify_admin_password(self.cfg, entered):
                 result["ok"] = True
                 result["password"] = entered
                 dialog.destroy()
@@ -211,17 +211,19 @@ class SettingsWindow:
         tk.Label(frame, text=self.client_uid, bg=BG, fg=INK, font=("Consolas", 10)).grid(row=1, column=1, sticky="w")
 
         tk.Label(frame, text="管理员密码", bg=BG, fg=MOSS).grid(row=2, column=0, sticky="w", pady=6)
-        v["adminPassword"] = tk.StringVar(value=self.cfg.get("adminPassword", "admin123"))
+        # 不显示当前密码（存的是哈希，也显示不出来）。留空 = 不改
+        v["adminPassword"] = tk.StringVar(value="")
         tk.Entry(frame, textvariable=v["adminPassword"], width=36, show="*").grid(row=2, column=1, sticky="w")
+        tk.Label(frame, text="留空表示不改。密码只存哈希，看不到原文。", bg=BG, fg=MOSS, font=("Microsoft YaHei", 9)).grid(row=3, column=1, sticky="w")
 
-        if self.cfg.get("requirePasswordChange") and self.cfg.get("adminPassword") == "admin123":
-            tk.Label(frame, text="默认密码还是 admin123，改掉它。", bg=BG, fg=AMBER, font=("Microsoft YaHei", 9)).grid(row=3, column=1, sticky="w")
+        if config.needs_password_change(self.cfg):
+            tk.Label(frame, text="现在还是默认密码 admin123，建议改掉。", bg=BG, fg=AMBER, font=("Microsoft YaHei", 9)).grid(row=4, column=1, sticky="w")
 
         v["complianceAccepted"] = tk.BooleanVar(value=bool(self.cfg.get("complianceAccepted")))
         tk.Checkbutton(
             frame, variable=v["complianceAccepted"], bg=BG, fg=INK, activebackground=BG, wraplength=420, justify="left",
             text="我知道这套软件会看屏幕、记文件，只用在合法教学管理上，并已告知学生、取得学校同意。",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(14, 4))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(14, 4))
         return frame
 
     def _tab_servers(self, parent) -> tk.Frame:
@@ -302,7 +304,7 @@ class SettingsWindow:
         v = self.vars
 
         for key, text in (
-            ("protectProcess", "进程保护（被关掉会自动回来）"),
+            ("protectProcess", "进程保护（被结束后自动回来）"),
             ("disableTaskManager", "禁用任务管理器"),
             ("autostart", "开机自启"),
         ):
@@ -311,7 +313,7 @@ class SettingsWindow:
 
         tk.Label(
             frame,
-            text="禁用任务管理器只影响当前用户，勾上并保存后立刻生效。\n自启会同时写 Run 键和一条登录计划任务。",
+            text="禁用任务管理器只影响当前用户，勾上并保存后立刻生效。\n自启会同时写 Run 键和一条登录计划任务。\n进程保护：常驻一个跟班进程，主进程被结束后几秒内会被拉回来。",
             bg=BG, fg=MOSS, justify="left", font=("Microsoft YaHei", 9),
         ).pack(anchor="w", pady=(14, 0))
         return frame
@@ -321,8 +323,15 @@ class SettingsWindow:
     def _save(self) -> None:
         cfg = dict(self.cfg)
         cfg["clientName"] = self.vars["clientName"].get().strip() or "教室一体机"
-        cfg["adminPassword"] = self.vars["adminPassword"].get() or "admin123"
-        cfg["requirePasswordChange"] = cfg["adminPassword"] == "admin123"
+
+        # 密码留空就保持原样；填了就换掉（存哈希，不留明文）
+        new_password = self.vars["adminPassword"].get().strip()
+        if new_password:
+            if len(new_password) < 6:
+                messagebox.showerror("太短了", "管理员密码至少 6 位。", parent=self.root)
+                return
+            config.set_admin_password(cfg, new_password)
+
         cfg["complianceAccepted"] = bool(self.vars["complianceAccepted"].get())
         cfg["watchDirs"] = [line.strip() for line in self.watch_text.get("1.0", tk.END).splitlines() if line.strip()]
 

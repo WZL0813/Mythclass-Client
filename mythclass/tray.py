@@ -163,7 +163,7 @@ def _ask_password(parent, cfg: dict) -> bool:
     result = {"ok": False}
 
     def confirm(_event=None):
-        if entry.get() == str(cfg.get("adminPassword", "admin123")):
+        if config.verify_admin_password(cfg, entry.get()):
             result["ok"] = True
         dialog.destroy()
 

@@ -92,5 +92,5 @@ Write-Host "  配置文件：$configPath"
 Write-Host "  日志文件：$appData\client.log"
 Write-Host ''
 Write-Host '  托盘里应该出现绿色小图标。左键看机器 ID，右键进设置。'
-Write-Host '  默认管理员密码 admin123，第一次进去请改掉。'
+Write-Host '  默认管理员密码 admin123，第一次进去请改掉（配置里只存哈希）。'
 Write-Host ''
