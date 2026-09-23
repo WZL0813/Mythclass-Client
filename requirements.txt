@@ -10,3 +10,5 @@ mss>=9.0.1                   # 屏幕捕获
 pycaw>=20240210              # Windows CoreAudio 音频会话
 comtypes>=1.4.0              # pycaw 依赖
 pywin32>=306                 # 服务/自启/进程保护
+aiortc>=1.9.0                # P2P 直连（WebRTC 数据通道）。会带进 av / cryptography，
+                             # 打包后 exe 大约多 20 MB

@@ -6,6 +6,8 @@ venv/
 env/
 
 # 打包产物
+# 打包到旁边目录时用的（主目录里的 exe 可能正被占用）
+dist-next/
 # PyInstaller 的工作目录（build/<name>/），里面全是中间产物，别提交
 build/mythclass/
 dist/

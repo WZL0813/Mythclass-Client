@@ -21,13 +21,19 @@
 
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_all, collect_submodules
+
 ROOT = Path(SPECPATH).parent          # SPECPATH = 本文件所在目录（build/），上一层就是仓库根
+
+# aiortc 的子模块是运行时按名字导入的，静态分析抓不全；av 还带着 FFmpeg 的 DLL
+AIORTC_HIDDEN = collect_submodules('aiortc')
+AV_DATAS, AV_BINARIES, AV_HIDDEN = collect_all('av')
 
 a = Analysis(
     [str(ROOT / 'build' / 'entry.py')],
     pathex=[str(ROOT)],
-    binaries=[],
-    datas=[
+    binaries=AV_BINARIES,
+    datas=AV_DATAS + [
         # 首次运行会把它复制到 %APPDATA%\Mythclass\config.json
         (str(ROOT / 'config.example.json'), '.'),
         # 托盘图标、关于窗口里的 logo，运行时按 mythclass/assets 找
@@ -44,7 +50,10 @@ a = Analysis(
         'comtypes', 'comtypes.client',
         'win32timezone',               # pywin32 时间相关
         'win32com', 'win32com.client',
-    ],
+        # P2P 直连
+        'aiortc',
+        'aioice', 'pylibsrtp', 'google_crc32c', 'pyee', 'cryptography',
+    ] + AIORTC_HIDDEN + AV_HIDDEN,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

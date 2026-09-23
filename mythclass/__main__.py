@@ -44,6 +44,7 @@ class MythclassClient:
         self.tray = Tray(self)
         self._stop = threading.Event()
         self._last_netban_refresh = 0.0
+        self.p2p = None            # 惰性创建：老师要直连才起 asyncio 线程
         self.logger = logging.getLogger("mythclass")
 
     # ------------------------------ 日志 ------------------------------
@@ -116,6 +117,9 @@ class MythclassClient:
             threading.Thread(target=self._handle_command, args=(payload,), daemon=True).start()
         elif event == "control_event":
             self._handle_control(payload)
+        elif event == "offer":
+            # 老师想直连：建 WebRTC 数据通道，成了画面就不经服务端了
+            self._ensure_p2p().handle_offer(payload.get("sdp") or {})
         elif event == "settings:update":
             self._apply_settings(payload.get("settings") or {})
         elif event in ("heartbeat:ack", "registered", "client:presence"):
@@ -134,10 +138,12 @@ class MythclassClient:
                     args.get("fps", self.cfg.get("screenFps", 12)),
                     args.get("quality", self.cfg.get("screenQuality", 60)),
                 )
-                self.screen.start(lambda frame: self.socket and self.socket.emit("screen_frame", frame))
+                self.screen.start(self._on_screen_frame)
             ok, output = True, "屏幕流开着了"
         elif command == "screen_stop":
             self.screen.stop()
+        if self.p2p is not None:
+            self.p2p.close()
             ok, output = True, "屏幕流关了"
         elif command == "request_frame":
             ok, output = True, "收到，流已经在推"
@@ -151,6 +157,28 @@ class MythclassClient:
             ).start()
         if self.socket:
             self.socket.emit("command_result", {"requestId": request_id, "command": command, "ok": ok, "output": output})
+
+    # ------------------------------ P2P 直连 ------------------------------
+
+    def _ensure_p2p(self):
+        """第一次要用才建，省得平时白养一个 asyncio 线程"""
+        if self.p2p is None:
+            from .p2p import P2PSession
+
+            self.p2p = P2PSession(self._send_signal, self._handle_control, self.log)
+        return self.p2p
+
+    def _send_signal(self, event: str, payload: dict) -> None:
+        """把 answer 这类信令交给服务端转发"""
+        if self.socket:
+            self.socket.emit(event, {**payload, "clientUid": self.client_uid})
+
+    def _on_screen_frame(self, frame: dict) -> None:
+        """有直连就走直连，没建起来还走服务端中继"""
+        if self.p2p is not None and self.p2p.send_frame(frame):
+            return
+        if self.socket:
+            self.socket.emit("screen_frame", frame)
 
     def _handle_control(self, payload: dict) -> None:
         """老师的鼠标键盘，落到这台机器上"""
@@ -303,6 +331,19 @@ class MythclassClient:
         sys.exit(0)
 
     @staticmethod
+    def p2p_check() -> str:
+        """自检：P2P 依赖在打包后能不能加载。
+
+        aiortc 是运行时才 import 的，等老师点「开始看」才发现缺件就太晚了。
+        """
+        try:
+            import aiortc
+
+            return f"ok（aiortc {aiortc.__version__}）"
+        except Exception as err:
+            return f"加载不了：{type(err).__name__}: {err}"
+
+    @staticmethod
     def icon_check() -> str:
         """自检：logo 到底读不读得到。
 
@@ -325,6 +366,8 @@ class MythclassClient:
             f"状态：{'已连接' if self.connected else '未连接'}\n"
             f"屏幕流：{'推着呢' if self.screen.alive() else '关着'}\n"
             f"托盘图标：{self.icon_check()}\n"
+            f"P2P 依赖：{self.p2p_check()}\n"
+            f"P2P 直连：{self.p2p.status() if self.p2p else '还没用过'}\n"
             f"禁网：{netban.describe()}\n"
             f"进程保护：{'开' if self.cfg.get('protectProcess') else '关'}"
             f"（跟班{'在跑' if guard.guardian_running() else '没跑'}）\n"
