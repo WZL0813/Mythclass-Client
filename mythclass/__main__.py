@@ -250,6 +250,13 @@ class MythclassClient:
         if self.cfg.get("autostart"):
             guard.enable_autostart()
 
+        # 任务管理器策略以配置文件为准。默认是关的，只有人勾过才禁
+        if self.cfg.get("disableTaskManager"):
+            guard.set_task_manager_disabled(True)
+        elif guard.task_manager_disabled():
+            # 以前开过，现在配置里关掉了，顺手放开
+            guard.set_task_manager_disabled(False)
+
         threading.Thread(target=self._connect_loop, name="mythclass-connect", daemon=True).start()
         threading.Thread(target=self._upload_loop, name="mythclass-upload", daemon=True).start()
         threading.Thread(target=self._housekeeping_loop, name="mythclass-housekeeping", daemon=True).start()

@@ -32,7 +32,7 @@ DEFAULTS = {
     "adminPassword": "admin123",
     "requirePasswordChange": True,
     "protectProcess": True,
-    "disableTaskManager": True,
+    "disableTaskManager": False,
     "autostart": True,
     "complianceAccepted": False,
     "teacherIp": "",

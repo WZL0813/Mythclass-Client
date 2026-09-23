@@ -281,7 +281,7 @@ class SettingsWindow:
 
         tk.Label(
             frame,
-            text="禁用任务管理器要注销一次才彻底生效。\n自启会同时写 Run 键和一条登录计划任务。",
+            text="禁用任务管理器只影响当前用户，勾上并保存后立刻生效。\n自启会同时写 Run 键和一条登录计划任务。",
             bg=BG, fg=MOSS, justify="left", font=("Microsoft YaHei", 9),
         ).pack(anchor="w", pady=(14, 0))
         return frame

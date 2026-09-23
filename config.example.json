@@ -13,7 +13,7 @@
   "adminPassword": "admin123",
   "requirePasswordChange": true,
   "protectProcess": true,
-  "disableTaskManager": true,
+  "disableTaskManager": false,
   "autostart": true,
   "complianceAccepted": false,
   "teacherIp": "",
