@@ -306,16 +306,23 @@ def _single_instance() -> bool:
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format=LOG_FORMAT,
-        filename=str(config.LOG_FILE) if "--console" not in argv else None,
-    )
+    # 目录必须先建：%APPDATA%\Mythclass 不在的话，
+    # logging 写文件会直接抛 FileNotFoundError（打包成 exe 后尤其明显）
+    config.ensure_dirs()
+
+    try:
+        logging.basicConfig(
+            level=logging.INFO,
+            format=LOG_FORMAT,
+            filename=str(config.LOG_FILE) if "--console" not in argv else None,
+        )
+    except OSError:
+        # 日志文件写不进去也不能让程序死在启动线上，退回只打控制台
+        logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 
     if "--guard" in argv:
         index = argv.index("--guard")
         pid = int(argv[index + 1]) if len(argv) > index + 1 else 0
-        config.ensure_dirs()
         guard.run_guardian(pid)
         return 0
 
@@ -323,8 +330,6 @@ def main(argv: list[str] | None = None) -> int:
         client = MythclassClient(console=True)
         print(client.status())
         return 0
-
-    config.ensure_dirs()
 
     if not _single_instance():
         print("[Mythclass] 已经有一个在跑了，这个先退。")

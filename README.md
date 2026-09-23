@@ -81,11 +81,30 @@ python -m mythclass --status       # 看状态就退出
 ## 打包
 
 ```bash
+pip install -r requirements.txt     # 装全！缺依赖会打出残废 exe
 pip install pyinstaller
 pyinstaller build/mythclass.spec
 ```
 
-产物 `dist/Mythclass.exe`，单文件、无控制台。
+产物 `dist/Mythclass.exe`，单文件、无控制台，约 29 MB。
+
+打完自检一句：
+
+```bash
+dist\Mythclass.exe --status
+```
+
+退出码 0、能打印机器 ID 就算成功。
+
+### 两个坑（已经在配置里填平，记着别再踩）
+
+1. **入口别用 `mythclass/__main__.py`**。它是包内模块，用的是相对导入，
+   PyInstaller 当独立脚本分析会炸 `attempted relative import with no known parent package`。
+   所以有 `build/entry.py` 这一层壳。
+
+2. **依赖装不全也能打包成功，但打出的是残废 exe**。缺 `pystray` 没托盘、
+   缺 `watchdog` 不监控文件、缺 `mss` 截不了屏、缺 `pycaw` 听不到音频——
+   体积会明显偏小（8 MB 左右）。正常应该在 29 MB 上下。
 
 ---
 
