@@ -55,16 +55,42 @@ if (-not (Test-Path (Join-Path $payload 'MythclassClient.exe'))) {
 # 这个错只有装到别人机器上才会暴露，所以放在构建时拦住。
 Write-Host '正在检查 .vbs / .cmd 的编码…'
 foreach ($f in @('run.vbs', 'install.cmd')) {
-  $bytes = [System.IO.File]::ReadAllBytes((Join-Path $Installer $f))
+  $path = Join-Path $Installer $f
+  $bytes = [System.IO.File]::ReadAllBytes($path)
+
+  # 1) UTF-8 BOM 一律禁止：VBScript 会报「无效字符」，cmd 会把首命令读坏
   if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
-    throw "$f 带了 UTF-8 BOM，VBScript/cmd 会报「无效字符」。必须存成 ASCII 无 BOM。"
+    throw "$f 带了 UTF-8 BOM，脚本解析器会报「无效字符」。"
   }
-  $bad = @($bytes | Where-Object { $_ -gt 127 })
-  if ($bad.Count -gt 0) {
-    throw "$f 里有 $($bad.Count) 个非 ASCII 字节，VBScript/cmd 解析会出问题。注释请写英文。"
+
+  # 2) install.cmd 只能纯 ASCII
+  $isUtf16 = ($bytes.Length -ge 2) -and (
+    ($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) -or ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF))
+  if ($f -eq 'install.cmd' -and $isUtf16) {
+    throw 'install.cmd 不能存成 UTF-16，cmd.exe 只认 ASCII/ANSI。'
+  }
+
+  # 3) 不是 UTF-16 的话，必须纯 ASCII
+  if (-not $isUtf16) {
+    $bad = @($bytes | Where-Object { $_ -gt 127 })
+    if ($bad.Count -gt 0) {
+      throw "$f 里有 $($bad.Count) 个非 ASCII 字节，又不是 UTF-16。要么存 ASCII，要么存 UTF-16。"
+    }
   }
 }
 Write-Host '  run.vbs / install.cmd 编码 ok'
+
+# .ps1 反过来：带中文的脚本必须有 UTF-8 BOM，
+# 否则 PowerShell 5.1 按 ANSI 读，中文变乱码、语法直接崩
+foreach ($f in @('gui.ps1', 'install-core.ps1', 'setup.ps1', 'uninstall.ps1', 'build.ps1')) {
+  $path = Join-Path $Installer $f
+  if (-not (Test-Path $path)) { continue }
+  $bytes = [System.IO.File]::ReadAllBytes($path)
+  if (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)) {
+    throw "$f 少了 UTF-8 BOM。带中文的 ps1 没 BOM，PowerShell 5.1 会读成乱码。"
+  }
+}
+Write-Host '  各 ps1 的 BOM ok'
 
 # ---------------------------------------------------------------- 铺 stage
 Write-Host '正在铺 stage…'

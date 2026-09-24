@@ -24,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'install-core.ps1')
 
 if (-not $Source) { $Source = $PSScriptRoot }
-$Version = '2.0.2'
+$Version = '2.0.3'
 $verFile = Join-Path $Source 'version.txt'
 if (Test-Path $verFile) { $Version = (Get-Content $verFile -Raw).Trim() }
 
