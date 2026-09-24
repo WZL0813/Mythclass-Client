@@ -19,7 +19,7 @@ from .api import ServerApi, SocketClient
 from .commands import execute, known_commands
 from .db import RecordStore
 from .monitors import AudioMonitor, FileMonitor, ScreenStreamer
-from . import netban
+from . import crash, netban
 from .tray import Tray, make_icon_image
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -441,6 +441,9 @@ def _single_instance() -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
+
+    # 第一件事就装崩溃钩子：启动阶段的错也得能上报 + 在桌面留日志
+    crash.install()
 
     # 目录必须先建：%APPDATA%\Mythclass 不在的话，
     # logging 写文件会直接抛 FileNotFoundError（打包成 exe 后尤其明显）
