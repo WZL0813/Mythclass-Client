@@ -269,3 +269,30 @@ class ScreenStreamer:
 
 def default_watch_dirs(cfg: dict) -> list[str]:
     return config.watch_dirs(cfg)
+
+
+def grab_thumbnail(max_width: int = 320, quality: int = 40) -> str | None:
+    """抓一张小图（base64 data URL）当缩略图。
+
+    单独开一次 mss，不跟正在跑的推流线程抢：
+    老师没点「开始看」时，机器墙上也得能看到画面。
+    """
+    try:
+        import mss
+        from PIL import Image
+    except ImportError:
+        return None
+
+    try:
+        with mss.mss() as grabber:
+            monitor = grabber.monitors[1] if len(grabber.monitors) > 1 else grabber.monitors[0]
+            shot = grabber.grab(monitor)
+            image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+            if image.width > max_width:
+                ratio = max_width / image.width
+                image = image.resize((max_width, max(1, int(image.height * ratio))))
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=max(15, min(int(quality or 40), 80)))
+            return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    except Exception:
+        return None

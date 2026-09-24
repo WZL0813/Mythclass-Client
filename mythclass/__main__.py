@@ -45,6 +45,7 @@ class MythclassClient:
         self._stop = threading.Event()
         self._last_netban_refresh = 0.0
         self.p2p = None            # 惰性创建：老师要直连才起 asyncio 线程
+        self._last_thumb = 0.0     # 上次抓缩略图的时间，用来限流
         self.logger = logging.getLogger("mythclass")
 
     # ------------------------------ 日志 ------------------------------
@@ -142,11 +143,10 @@ class MythclassClient:
             ok, output = True, "屏幕流开着了"
         elif command == "screen_stop":
             self.screen.stop()
-        if self.p2p is not None:
-            self.p2p.close()
             ok, output = True, "屏幕流关了"
         elif command == "request_frame":
-            ok, output = True, "收到，流已经在推"
+            threading.Thread(target=self._send_thumb, args=(args,), daemon=True).start()
+            ok, output = True, "给你抓了张小图"
         else:
             ok, output = execute(command, args)
 
@@ -167,6 +167,24 @@ class MythclassClient:
 
             self.p2p = P2PSession(self._send_signal, self._handle_control, self.log)
         return self.p2p
+
+    def _send_thumb(self, args: dict) -> None:
+        """给老师一张小图当缩略图。限流：1.5 秒内只认一次。"""
+        now = time.time()
+        if now - self._last_thumb < 1.5:
+            return
+        self._last_thumb = now
+
+        try:
+            from .monitors import grab_thumbnail
+
+            data = grab_thumbnail(int(args.get("width") or 320), int(args.get("quality") or 40))
+        except Exception as err:
+            self.log(f"抓缩略图失败：{err}")
+            return
+
+        if data and self.socket:
+            self.socket.emit("screen_frame", {"data": data, "thumb": True, "ts": int(now * 1000)})
 
     def _send_signal(self, event: str, payload: dict) -> None:
         """把 answer 这类信令交给服务端转发"""
@@ -319,6 +337,8 @@ class MythclassClient:
             guard.request_stop()
         self._stop.set()
         self.screen.stop()
+        if self.p2p is not None:
+            self.p2p.close()
         if self.socket:
             self.socket.stop()
         if self.file_monitor:
