@@ -25,3 +25,10 @@ client.log
 .idea/
 .DS_Store
 Thumbs.db
+
+# PyInstaller 工作目录（中间产物，别提交；build/*.spec 要留着）
+build/mythclass/
+build/mythclass-onedir/
+*.toc
+warn-*.txt
+xref-*.html
