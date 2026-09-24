@@ -8,7 +8,8 @@
 2.0.0  ← 目录版第一次做成安装包
 2.0.1  ← 安装包改成图形向导
 2.0.2  ← 修 run.vbs 的 BOM（VBScript 不认，会报「无效字符」）
-2.0.3  ← 修「双击没反应」：SFX 会删掉解包目录，改成先复制到稳定目录再启动（当前）
+2.0.3  ← 修「双击没反应」：SFX 会删掉解包目录，改成先复制到稳定目录再启动
+2.0.4  ← 换掉整个打包方式：用系统自带的 csc 编译原生安装器（当前）
 ...
 ```
 
@@ -23,7 +24,7 @@
 
 ## 安装界面
 
-安装包双击后是一个**图形向导**（WPF 画的，不是黑框命令行），三步：
+安装包双击后是**原生 Windows 界面**（C# WinForms，不是黑框命令行），一个窗口：
 
 ```
 第 1 步 · 使用许可
@@ -40,23 +41,41 @@
   · 装完可以选「安装完成后启动客户端」（默认勾上）
 ```
 
-界面文件：
+文件：
 
 | 文件 | 干什么 |
 |---|---|
-| `gui.ps1` | 图形向导本体（WPF 三页） |
-| `install-core.ps1` | 安装逻辑的公共函数，图形版和命令行版共用 |
-| `run.vbs` | 让向导悄悄起来，不闪黑框 |
-| `setup.ps1` | 命令行 / 静默安装（批量部署、测试、排查用） |
+| `csharp\MythclassSetup.cs` | 入口：解析参数、提权、静默模式 |
+| `csharp\SetupForm.cs` | 界面：协议 + 同意 + 安装位置 + 两个快捷方式勾选 |
+| `csharp\InstallEngine.cs` | 安装逻辑：停旧客户端、清旧版本、解 payload、快捷方式、登记 |
+| `csharp\uninstall.cmd` | 卸载脚本（装进安装目录，注册表指向它） |
+| `build-csharp.ps1` | 打包脚本 |
+| `setup.ps1` / `install-core.ps1` / `uninstall.ps1` | 兜底：纯 PowerShell 的命令行安装（排查用） |
 
 ## 怎么打包
 
 ```powershell
 # 仓库根目录
-powershell -ExecutionPolicy Bypass -File installer\build.ps1
+powershell -ExecutionPolicy Bypass -File installer\build-csharp.ps1
 ```
 
 产物：`installer\out\MythclassSetup-<版本>.exe`（单文件，双击即装）
+
+里面做的事：读版本号 → 打目录版（PyInstaller onedir）→ 压成 payload.zip →
+**用系统自带的 `csc.exe` 把 `installer\csharp\*.cs` 编成原生 exe**，
+payload 作为资源内嵌进去。
+
+不需要 Inno / NSIS / 任何下载：`csc.exe` 是 Windows 自带的（.NET Framework 4）。
+
+支持的命令行参数（批量部署、测试用）：
+
+```
+--target <目录>   指定安装位置
+--silent          不显示界面直接装
+--nolaunch        装完不启动客户端
+--noelevate       跳过管理员检查（测试用）
+--uninstall       走卸载流程
+```
 
 ## 装到哪儿
 
@@ -78,11 +97,16 @@ powershell -ExecutionPolicy Bypass -File installer\uninstall.ps1
 
 测试时用 `-TargetDir D:\test -NoLaunch` 避免动真格。
 
-## 为什么不做成 MSI
+## 为什么是「自己用 C# 写一个」而不是 IExpress / Inno / NSIS
 
-机器上没有 Inno Setup / NSIS / WiX，只有 Windows 自带的 IExpress。
-IExpress 只认文件清单（一千多个文件没法一个个列），所以先把目录版压成
-`payload.zip`，安装时再解开。
+- **IExpress**（Windows 自带）做出来的其实是自解压包，链条特别长：
+  `SFX → cmd → wscript → 隐藏 PowerShell → WPF`。任何一层出问题，
+  用户看到的都只是「双击没反应」——而且自解压包会把自己解出来的临时目录
+  在 install.cmd 返回后删掉，正好把刚启动的向导一起删了（踩过这个坑）。
+- **Inno Setup / NSIS** 机器上没有装，而且下载源在当前网络下拿不到文件。
+- **csc.exe** 是每台 Windows 都有的 .NET Framework 编译器，
+  编译出来的就是一个普通 exe：界面是系统控件、payload 内嵌、
+  解压由它自己完成、不经过任何临时目录。一层，没有中间环节。
 
 **安装包没做代码签名**，Windows 第一次运行会弹「未知发布者」——点「更多信息 → 仍要运行」。
 要消掉这个提示得买代码签名证书。
