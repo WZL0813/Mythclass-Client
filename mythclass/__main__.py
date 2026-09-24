@@ -19,7 +19,7 @@ from .api import ServerApi, SocketClient
 from .commands import execute, known_commands
 from .db import RecordStore
 from .monitors import AudioMonitor, FileMonitor, ScreenStreamer
-from . import crash, netban
+from . import crash, lanport, netban, trust
 from .tray import Tray, make_icon_image
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -49,6 +49,13 @@ class MythclassClient:
         self._last_netban_refresh = 0.0
         self.p2p = None            # 惰性创建：老师要直连才起 asyncio 线程
         self._last_thumb = 0.0     # 上次抓缩略图的时间，用来限流
+        # 局域网直连：老师端在同一个网段时可以直接连这个端口，不走服务器
+        self.lan = lanport.LanPort(
+            trust=trust,
+            on_command=self._run_command_sync,
+            log=lambda m: self.log(m),
+            port=int(self.cfg.get("lanPort") or lanport.DEFAULT_PORT),
+        )
         self.logger = logging.getLogger("mythclass")
 
     # ------------------------------ 日志 ------------------------------
@@ -69,7 +76,9 @@ class MythclassClient:
                     return
                 try:
                     api = ServerApi(url)
-                    info = api.register(self.client_uid, self.cfg.get("clientName") or "教室一体机")
+                    info = api.register(
+                        self.client_uid, self.cfg.get("clientName") or "教室一体机", identity.local_ips()
+                    )
                     if abs(api.clock_skew) > 120:
                         self.log(
                             f"本机时间与服务端差了 {int(api.clock_skew)} 秒，"
@@ -135,7 +144,10 @@ class MythclassClient:
         elif event == "control_event":
             self._handle_control(payload)
         elif event == "offer":
-            # 老师想直连：建 WebRTC 数据通道，成了画面就不经服务端了
+            # 老师想直连：先记一次「这个 IP 连过来了」，再建数据通道。
+            # 记满 3 次就把这个 IP 记成信任、发一张配对密钥，
+            # 以后没有服务器也能拿密钥直接控制（走局域网端口）。
+            self._note_teacher(payload.get("from") or {})
             self._ensure_p2p().handle_offer(payload.get("sdp") or {})
         elif event == "settings:update":
             self._apply_settings(payload.get("settings") or {})
@@ -143,6 +155,51 @@ class MythclassClient:
             pass
         else:
             self.log(f"收到不认识的事件：{event}", logging.DEBUG)
+
+    # ------------------------------ 局域网直连 ------------------------------
+
+    def _note_teacher(self, sender: dict) -> None:
+        """老师连过来一次就记一笔。IP 由服务端带下来（隧道后面只有它看得见）"""
+        ip = str(sender.get("ip") or "").strip()
+        if not ip:
+            return
+        try:
+            info = trust.record(ip, str(sender.get("username") or ""))
+        except Exception as err:
+            self.log(f"记录教师端连接失败：{err}", logging.WARNING)
+            return
+        if info.get("just_trusted"):
+            self.log(
+                f"教师端 {ip} 直连已满 {trust.THRESHOLD} 次，已记成信任并生成配对密钥："
+                f"{info.get('key')}"
+            )
+
+    def _run_command_sync(self, command: str, args: dict) -> tuple[bool, str]:
+        """局域网端口来的命令：同步执行、直接返回结果。
+
+        和 _handle_command 的区别：那边要发回执、要报给服务端；
+        这边是点对点，谁问谁等结果。
+        """
+        command = str(command or "").strip()
+
+        if command == "screen_start":
+            if not self.screen.alive():
+                self.screen = ScreenStreamer(
+                    args.get("fps", self.cfg.get("screenFps", 12)),
+                    args.get("quality", self.cfg.get("screenQuality", 60)),
+                )
+                self.screen.start(self._on_screen_frame)
+            return True, "屏幕流开着了"
+        if command == "screen_stop":
+            self.screen.stop()
+            return True, "屏幕流关了"
+        if command == "status":
+            return True, f"v{__version__}，屏幕流{'开着' if self.screen.alive() else '关着'}"
+
+        try:
+            return execute(command, args or {})
+        except Exception as err:
+            return False, f"{type(err).__name__}: {err}"
 
     def _handle_command(self, payload: dict) -> None:
         command = str(payload.get("command") or "")
@@ -274,7 +331,7 @@ class MythclassClient:
                     if audio and self.api.upload_audio(audio):
                         self.store.mark_uploaded("audio_logs", [item["id"] for item in audio])
 
-                    self.api.heartbeat()
+                    self.api.heartbeat(identity.local_ips())
             except Exception as err:
                 self.log(f"上报出问题了：{err}", logging.WARNING)
 
@@ -341,6 +398,7 @@ class MythclassClient:
         threading.Thread(target=self._housekeeping_loop, name="mythclass-housekeeping", daemon=True).start()
 
         self.tray.start()
+        self.lan.start()
 
     def wait_forever(self) -> None:
         while not self._stop.is_set():
@@ -355,6 +413,7 @@ class MythclassClient:
         self.screen.stop()
         if self.p2p is not None:
             self.p2p.close()
+        self.lan.stop()
         if self.socket:
             self.socket.stop()
         if self.file_monitor:
@@ -421,6 +480,8 @@ class MythclassClient:
             f"状态：{'已连接' if self.connected else '未连接'}\n"
             f"屏幕流：{'推着呢' if self.screen.alive() else '关着'}\n"
             f"托盘图标：{self.icon_check()}\n"
+            f"局域网端口：{self.lan.status()}\n"
+            f"信任的教师端：{trust.describe()}\n"
             f"证书库：{self.tls_check()}\n"
             f"连接层：{self.socket.last_error if self.socket and self.socket.last_error else '没有报错'}\n"
             f"P2P 依赖：{self.p2p_check()}\n"

@@ -74,7 +74,7 @@ class ServerApi:
             head["Authorization"] = f"Bearer {self.token}"
         return head
 
-    def register(self, client_uid: str, name: str) -> dict:
+    def register(self, client_uid: str, name: str, local_ips: list[str] | None = None) -> dict:
         resp = self.session.post(
             f"{self.base}/api/client/register",
             json={
@@ -82,6 +82,7 @@ class ServerApi:
                 "name": name,
                 "os": identity.os_description(),
                 "version": __version__,
+                "localIps": local_ips or [],
             },
             headers=self._headers(),
             timeout=DEFAULT_TIMEOUT,
@@ -103,10 +104,13 @@ class ServerApi:
                 self.clock_skew = 0.0
         return data
 
-    def heartbeat(self) -> bool:
+    def heartbeat(self, local_ips: list[str] | None = None) -> bool:
         try:
             resp = self.session.post(
-                f"{self.base}/api/client/heartbeat", headers=self._headers(), timeout=DEFAULT_TIMEOUT
+                f"{self.base}/api/client/heartbeat",
+                json={"localIps": local_ips or []},
+                headers=self._headers(),
+                timeout=DEFAULT_TIMEOUT,
             )
             return resp.ok
         except requests.RequestException:

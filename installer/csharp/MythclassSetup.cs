@@ -28,7 +28,7 @@ namespace MythclassSetup
     {
         public const string AppName = "Mythclass 客户端";
         public const string ExeName = "MythclassClient.exe";
-        public const string Version = "2.0.4";
+        public const string Version = "2.0.5";
         public const string DefaultDir = @"C:\Program Files (x86)\Mythclass";
         public const string RegPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MythclassClient";
         public const string PayloadResource = "payload.zip";
