@@ -52,9 +52,9 @@ if (-not (Test-Path (Join-Path $payload 'MythclassClient.exe'))) {
 Write-Host '正在铺 stage…'
 Remove-Item $Stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $Stage -Force | Out-Null
-Copy-Item (Join-Path $Installer 'install.cmd')   $Stage
-Copy-Item (Join-Path $Installer 'setup.ps1')     $Stage
-Copy-Item (Join-Path $Installer 'uninstall.ps1') $Stage
+foreach ($f in @('install.cmd', 'run.vbs', 'gui.ps1', 'install-core.ps1', 'setup.ps1', 'uninstall.ps1')) {
+  Copy-Item (Join-Path $Installer $f) $Stage
+}
 Set-Content -Path (Join-Path $Stage 'version.txt') -Value $version -Encoding UTF8
 
 Write-Host '正在压 payload.zip（一千多个文件，稍等）…'
@@ -70,7 +70,8 @@ $target = Join-Path $OutDir $exeName
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 Remove-Item $target -Force -ErrorAction SilentlyContinue
 
-$files = @('install.cmd', 'setup.ps1', 'uninstall.ps1', 'version.txt', 'payload.zip')
+$files = @('install.cmd', 'run.vbs', 'gui.ps1', 'install-core.ps1',
+           'setup.ps1', 'uninstall.ps1', 'version.txt', 'payload.zip')
 $strings = @()
 for ($i = 0; $i -lt $files.Count; $i++) { $strings += "FILE$i=`"$($files[$i])`"" }
 $srcLines = @()
@@ -82,7 +83,7 @@ Class=IEXPRESS
 SEDVersion=3
 [Options]
 PackagePurpose=InstallApp
-ShowInstallProgramWindow=0
+ShowInstallProgramWindow=1
 HideExtractAnimation=1
 UseLongFileName=1
 InsideCompressed=0
