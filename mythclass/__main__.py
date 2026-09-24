@@ -399,6 +399,7 @@ class MythclassClient:
             f"状态：{'已连接' if self.connected else '未连接'}\n"
             f"屏幕流：{'推着呢' if self.screen.alive() else '关着'}\n"
             f"托盘图标：{self.icon_check()}\n"
+            f"连接层：{self.socket.last_error if self.socket and self.socket.last_error else '没有报错'}\n"
             f"P2P 依赖：{self.p2p_check()}\n"
             f"P2P 直连：{self.p2p.status() if self.p2p else '还没用过'}\n"
             f"禁网：{netban.describe()}\n"

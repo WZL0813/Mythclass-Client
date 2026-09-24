@@ -168,6 +168,8 @@ class SocketClient:
         self.on_log = on_log or (lambda _m: None)
         self.idle_timeout = idle_timeout
         self.auth_failed = False  # 凭证不认：得让上层重新注册换一张
+        self.last_error = ""     # 最近一次连不上的原因，--status 会显示
+        self.fail_count = 0
 
         self._ws: websocket.WebSocket | None = None
         self._stop = threading.Event()
@@ -206,9 +208,20 @@ class SocketClient:
             try:
                 self._connect_once()
                 backoff = 2
-            except Exception:
+                self.fail_count = 0
+            except Exception as err:
                 self.connected = False
                 self.on_state(False)
+                self.last_error = f"{type(err).__name__}: {err}"
+                self.fail_count += 1
+                if self.fail_count <= 3 or self.fail_count % 10 == 0:
+                    self.on_log(f"WebSocket 连不上（第 {self.fail_count} 次）：{self.last_error}")
+                if self.fail_count == 3:
+                    self.on_log(
+                        "提示：心跳能通但 WebSocket 连不上，通常是网络里有代理/防火墙"
+                        "挡了 WebSocket 升级，或者系统根证书太旧（心跳走 requests 自带的"
+                        "证书库，WebSocket 走系统的）。"
+                    )
             if self.auth_failed:
                 # 凭证不认，再撞多少次都一样。收工，让上层重新注册
                 self._stop.set()
