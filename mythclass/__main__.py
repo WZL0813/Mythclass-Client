@@ -364,6 +364,25 @@ class MythclassClient:
         sys.exit(0)
 
     @staticmethod
+    def tls_check() -> str:
+        """自检：WebSocket 用哪份证书库
+
+        系统证书库不全时，心跳能通但 WebSocket 会报
+        CERTIFICATE_VERIFY_FAILED —— 这个自检就是为了不再瞎猜。
+        """
+        try:
+            from .api import ca_bundle
+
+            ca = ca_bundle()
+            if not ca:
+                return "用的是系统证书库（certifi 没找到）"
+            # 不用 os.path：这个文件里没导入 os，打包后才发现会 NameError
+            name = ca.replace("\\", "/").split("/")[-1]
+            return f"ok（{name}，和心跳同一份）"
+        except Exception as err:
+            return f"检查不了：{type(err).__name__}: {err}"
+
+    @staticmethod
     def p2p_check() -> str:
         """自检：P2P 依赖在打包后能不能加载。
 
@@ -399,6 +418,7 @@ class MythclassClient:
             f"状态：{'已连接' if self.connected else '未连接'}\n"
             f"屏幕流：{'推着呢' if self.screen.alive() else '关着'}\n"
             f"托盘图标：{self.icon_check()}\n"
+            f"证书库：{self.tls_check()}\n"
             f"连接层：{self.socket.last_error if self.socket and self.socket.last_error else '没有报错'}\n"
             f"P2P 依赖：{self.p2p_check()}\n"
             f"P2P 直连：{self.p2p.status() if self.p2p else '还没用过'}\n"
@@ -431,6 +451,9 @@ def main(argv: list[str] | None = None) -> int:
             level=logging.INFO,
             format=LOG_FORMAT,
             filename=str(config.LOG_FILE) if "--console" not in argv else None,
+            # 不指定的话跟系统编码走（中文 Windows 是 GBK），
+            # 日志发出去别人打开全是乱码
+            encoding="utf-8",
         )
     except OSError:
         # 日志文件写不进去也不能让程序死在启动线上，退回只打控制台

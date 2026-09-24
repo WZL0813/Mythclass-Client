@@ -10,8 +10,8 @@
 from __future__ import annotations
 
 import json
+import os
 import ssl
-import time
 import threading
 import time
 from typing import Callable
@@ -34,6 +34,22 @@ def http_base(ws_url: str) -> str:
     if url.startswith("http"):
         return url
     return "https://" + url
+
+
+def ca_bundle() -> str | None:
+    """certifi 的证书库路径。拿不到就返回 None，退回系统库。
+
+    为什么要用它：requests 默认就用这份，所以心跳一直是通的；
+    而 websocket-client 默认用系统证书库 —— 老 Windows 镜像
+    （虚拟机里很常见）根 CA 不全，于是「心跳能通、WebSocket 验不过」。
+    """
+    try:
+        import certifi
+
+        path = certifi.where()
+        return path if path and os.path.exists(path) else None
+    except Exception:
+        return None
 
 
 def socket_url(ws_url: str) -> str:
@@ -233,10 +249,16 @@ class SocketClient:
             backoff = min(backoff * 2, 60)
 
     def _connect_once(self) -> None:
+        sslopt = {"cert_reqs": ssl.CERT_REQUIRED}
+        ca = ca_bundle()
+        if ca:
+            # 和 requests 用同一份，别让系统证书库拖后腿
+            sslopt["ca_certs"] = ca
+
         ws = websocket.create_connection(
             self.url,
             timeout=10,
-            sslopt={"cert_reqs": ssl.CERT_REQUIRED},
+            sslopt=sslopt,
             enable_multithread=True,
         )
         self._ws = ws
