@@ -28,7 +28,10 @@ LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 class MythclassClient:
     def __init__(self, console: bool = False):
         self.cfg = config.load()
-        self.client_uid = identity.resolve_uid(self.cfg)
+        # 机器号必须是「定下来就永远不变」的：虚拟机上 MAC 会变，
+        # 每次重算就会被当成一台新机器，老师那边绑的还是旧的。
+        # ensure_client_uid 第一次算出来就写进 config.json。
+        self.client_uid = config.ensure_client_uid(self.cfg)
         self.store = RecordStore()
         self.console = console
 
