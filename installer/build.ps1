@@ -48,6 +48,24 @@ if (-not (Test-Path (Join-Path $payload 'MythclassClient.exe'))) {
   throw "没找到目录版产物：$payload"
 }
 
+# ---------------------------------------------------------------- 编码检查
+# .vbs 和 .cmd 必须是纯 ASCII 且不带 BOM：
+#   VBScript 解析器不认 UTF-8 BOM，会在第 1 行第 1 列报「无效字符」
+#   cmd.exe 遇到 BOM 会把 @echo off 读成乱码首命令
+# 这个错只有装到别人机器上才会暴露，所以放在构建时拦住。
+Write-Host '正在检查 .vbs / .cmd 的编码…'
+foreach ($f in @('run.vbs', 'install.cmd')) {
+  $bytes = [System.IO.File]::ReadAllBytes((Join-Path $Installer $f))
+  if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+    throw "$f 带了 UTF-8 BOM，VBScript/cmd 会报「无效字符」。必须存成 ASCII 无 BOM。"
+  }
+  $bad = @($bytes | Where-Object { $_ -gt 127 })
+  if ($bad.Count -gt 0) {
+    throw "$f 里有 $($bad.Count) 个非 ASCII 字节，VBScript/cmd 解析会出问题。注释请写英文。"
+  }
+}
+Write-Host '  run.vbs / install.cmd 编码 ok'
+
 # ---------------------------------------------------------------- 铺 stage
 Write-Host '正在铺 stage…'
 Remove-Item $Stage -Recurse -Force -ErrorAction SilentlyContinue
