@@ -67,6 +67,12 @@ class MythclassClient:
                 try:
                     api = ServerApi(url)
                     info = api.register(self.client_uid, self.cfg.get("clientName") or "教室一体机")
+                    if abs(api.clock_skew) > 120:
+                        self.log(
+                            f"本机时间与服务端差了 {int(api.clock_skew)} 秒，"
+                            "时间差太大会导致凭证校验失败，建议把系统时间同步一下。",
+                            logging.WARNING,
+                        )
                     self.api = api
                     self.server_url = url
                     self.log(f"已经连上 {url}（机器号 {self.client_uid}）")
@@ -76,7 +82,14 @@ class MythclassClient:
                     if settings.get("relayEnabled") is False:
                         self.log("服务端关了中继，只能靠 P2P。")
 
-                    self.socket = SocketClient(url, api.token, self._on_event, self._on_state, self._on_ready)
+                    self.socket = SocketClient(
+                        url,
+                        api.token,
+                        self._on_event,
+                        self._on_state,
+                        self._on_ready,
+                        on_log=lambda m: self.log(f"连接层：{m}", logging.WARNING),
+                    )
                     self.socket.start()
                     backoff = 5
                     self._wait_until_disconnected()

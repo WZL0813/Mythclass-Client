@@ -123,6 +123,25 @@ def save(cfg: dict) -> dict:
     return data
 
 
+def ensure_client_uid(cfg: dict) -> str:
+    """把算出来的机器号写进配置，之后就认这个了。
+
+    为什么要写死：机器号是拿 MAC + 主机名 + 机器 GUID 算的，
+    而虚拟机上 MAC 会变（改网卡模式、装虚拟适配器、换宿主网卡），
+    一变就算成一台新机器 —— 老师那边绑的还是旧那条，自然「连不上」了。
+    """
+    from . import identity
+
+    uid = str(cfg.get("clientUid") or "").strip().upper()
+    if uid:
+        return uid
+
+    uid = identity.machine_fingerprint()
+    cfg["clientUid"] = uid
+    save(cfg)
+    return uid
+
+
 def enabled_servers(cfg: dict) -> list[str]:
     """按顺序给出要试的服务器地址：官方优先，然后自定义。"""
     order = []

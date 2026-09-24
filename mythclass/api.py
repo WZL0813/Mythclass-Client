@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import ssl
+import time
 import threading
 import time
 from typing import Callable
@@ -49,6 +50,7 @@ class ServerApi:
         self.base = http_base(base)
         self.session = requests.Session()
         self.token = ""
+        self.clock_skew = 0.0  # 本机时间 − 服务端时间，秒
 
     def _headers(self) -> dict:
         head = {"Content-Type": "application/json"}
@@ -71,6 +73,18 @@ class ServerApi:
         resp.raise_for_status()
         data = resp.json()
         self.token = data.get("token", "")
+
+        # HTTP 的 Date 头就是服务端的时间。虚拟机时钟最爱飘，
+        # 而 JWT 是时间敏感的：差太多会变成「凭证不认」。
+        date_header = resp.headers.get("Date")
+        if date_header:
+            try:
+                from email.utils import parsedate_to_datetime
+
+                server_time = parsedate_to_datetime(date_header).timestamp()
+                self.clock_skew = time.time() - server_time
+            except Exception:
+                self.clock_skew = 0.0
         return data
 
     def heartbeat(self) -> bool:
@@ -143,12 +157,17 @@ class SocketClient:
         on_event: Callable[[str, dict], None],
         on_state: Callable[[bool], None] | None = None,
         on_ready: Callable[[], None] | None = None,
+        on_log: Callable[[str], None] | None = None,
+        idle_timeout: float = 75.0,
     ):
         self.url = socket_url(ws_url)
         self.token = token
         self.on_event = on_event
         self.on_state = on_state or (lambda _s: None)
         self.on_ready = on_ready or (lambda: None)
+        self.on_log = on_log or (lambda _m: None)
+        self.idle_timeout = idle_timeout
+        self.auth_failed = False  # 凭证不认：得让上层重新注册换一张
 
         self._ws: websocket.WebSocket | None = None
         self._stop = threading.Event()
@@ -190,6 +209,10 @@ class SocketClient:
             except Exception:
                 self.connected = False
                 self.on_state(False)
+            if self.auth_failed:
+                # 凭证不认，再撞多少次都一样。收工，让上层重新注册
+                self._stop.set()
+                break
             if self._stop.is_set():
                 break
             # 断线重连：慢慢退避，最多 60 秒
@@ -215,6 +238,8 @@ class SocketClient:
         ws.settimeout(10)
         ack = ws.recv()
         if isinstance(ack, str) and ack.startswith("44"):
+            # 别拿同一张死证反复撞：标记一下，让外层重新注册换新的
+            self.auth_failed = True
             raise ConnectionError(f"服务端不认这个凭证：{ack[2:]}")
 
         self.connected = True
@@ -223,6 +248,7 @@ class SocketClient:
 
         ws.settimeout(1.0)
         last_heartbeat = 0.0
+        last_rx = time.time()
 
         while not self._stop.is_set():
             # 发心跳事件（每 20 秒）
@@ -239,9 +265,15 @@ class SocketClient:
             try:
                 raw = ws.recv()
             except websocket.WebSocketTimeoutException:
+                # 服务端每 25 秒会 ping 一次；超时太久说明这条连接已经死了
+                # （虚拟机睡眠/恢复后 NAT 表失效就是这种半开状态）
+                if time.time() - last_rx > self.idle_timeout:
+                    self.on_log(f"{int(self.idle_timeout)} 秒没收到服务端任何数据，判定连接已死，重连。")
+                    break
                 continue
             except Exception:
                 break
+            last_rx = time.time()
 
             if not raw:
                 continue
