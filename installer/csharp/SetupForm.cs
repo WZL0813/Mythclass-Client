@@ -278,6 +278,18 @@ namespace MythclassSetup
                 engine.OnStep = Step;
                 engine.OnProgress = Progress;
                 engine.StopOldClient();
+
+                // 装过更高版本就不许降级
+                var blocked = engine.DowngradeMessage(target);
+                if (blocked.Length > 0)
+                {
+                    Step(blocked);
+                    statusLabel.Text = "不能降级安装。";
+                    installing = false;
+                    installBtn.Enabled = true;
+                    return;
+                }
+
                 var old = engine.ClearOldVersion(target);
                 if (old.Length > 0 && old != "not-ours") Step("  发现旧版本 " + old + "，已清掉");
                 engine.Extract(target);

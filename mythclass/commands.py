@@ -103,11 +103,19 @@ def _int_or(value, fallback: int, low: int, high: int) -> int:
     return max(low, min(number, high))
 
 
+# 自适应时逐个试这些倍率（低到高），放得下就往上走
+_FIT_STEPS = (1.0, 1.15, 1.3, 1.5, 1.7, 1.95, 2.2, 2.5, 2.85, 3.2, 3.6, 4.0)
+
+
 def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, str]:
     """弹一条通知。
 
     能自定义：窗口大小、标题/内容/按钮的字号、自适应最大、
     置顶、全屏、最多三个回复选项。
+
+    自适应（autoFit）指的是：**把所有文字按原比例整体放大到屏幕最大**。
+    如果调用方自己改过比例（标题 30 / 内容 12 之类），就按他那套比例放大，
+    倍率对三者一视同仁，比例不变。
 
     on_reply：学生回答后用这个回调把答案交出去（走 socket 的用）
     wait：等学生回答完再返回（局域网网页那种一问一答的用，最多等 120 秒）
@@ -124,11 +132,9 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
     auto_fit = bool(args.get("autoFit", False))
 
     fonts = args.get("fontSize") or {}
-    font_title = _int_or(fonts.get("title"), 16, 9, 72)
-    font_body = _int_or(fonts.get("body"), 12, 8, 60)
-    font_button = _int_or(fonts.get("button"), 10, 8, 40)
-    # 按钮上的字比正文小一点：tk 的 Button 不好调内边距，靠字号拉开层次
-    button_size = max(font_button, 8)
+    base_title = _int_or(fonts.get("title"), 16, 9, 72)
+    base_body = _int_or(fonts.get("body"), 12, 8, 60)
+    base_button = _int_or(fonts.get("button"), 10, 8, 40)
 
     box: dict = {"answer": None}
     done = threading.Event() if wait else None
@@ -140,36 +146,41 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
         if topmost:
             root.attributes("-topmost", True)
         root.configure(bg="#f3efe3")
-        if fullscreen:
-            root.attributes("-fullscreen", True)
-        else:
-            screen_w, screen_h = root.winfo_screenwidth(), root.winfo_screenheight()
-            if auto_fit:
-                # 自适应：先让内容自己算出需要多大，再按屏幕留边
-                root.update_idletasks()
-                w = max(360, min(root.winfo_reqwidth() + 40, int(screen_w * 0.92)))
-                h = max(180, min(root.winfo_reqheight() + 30, int(screen_h * 0.92)))
-            else:
-                w, h = win_w, win_h
-            w = min(w, int(screen_w * 0.96))
-            h = min(h, int(screen_h * 0.96))
-            root.geometry(
-                "%dx%d+%d+%d"
-                % (w, h, max(screen_w // 2 - w // 2, 0), max(screen_h // 3, 0))
-            )
+        screen_w, screen_h = root.winfo_screenwidth(), root.winfo_screenheight()
 
         frame = tk.Frame(root, bg="#f3efe3", padx=30, pady=26)
         frame.pack(fill="both", expand=True)
 
-        tk.Label(
-            frame, text=title, bg="#f3efe3", fg="#2f4f3e",
-            font=("Microsoft YaHei", font_title, "bold"),
-            wraplength=max(300, win_w - 80), justify="left",
-        ).pack(anchor="w")
-        tk.Message(
+        title_label = tk.Label(
+            frame, text=title, bg="#f3efe3", fg="#2f4f3e", justify="left",
+            font=("Microsoft YaHei", base_title, "bold"),
+        )
+        title_label.pack(anchor="w")
+
+        body_label = tk.Message(
             frame, text=body, bg="#f3efe3", fg="#10160f",
-            width=max(280, win_w - 80), font=("Microsoft YaHei", font_body),
-        ).pack(anchor="w", pady=(14, 18), fill="both", expand=True)
+            font=("Microsoft YaHei", base_body),
+        )
+        body_label.pack(anchor="w", pady=(14, 18), fill="both", expand=True)
+
+        bar = tk.Frame(frame, bg="#f3efe3")
+        bar.pack(fill="x", side="bottom")
+
+        scale_box = {"value": 1.0}
+        # (控件, 原始字号) —— 放大时统一乘倍率，比例保持不变
+        sized: list = [(title_label, base_title), (body_label, base_body)]
+
+        def apply_scale(scale: float) -> None:
+            scale_box["value"] = scale
+            wrap = max(280, int(win_w * min(scale, 1.6)) - 80)
+            for widget, base in sized:
+                step = 1 if widget is body_label else 1
+                widget.configure(font=("Microsoft YaHei", max(8, int(round(base * scale))), "bold")
+                                 if widget is title_label
+                                 else ("Microsoft YaHei", max(8, int(round(base * scale)))))
+            title_label.configure(wraplength=wrap)
+            body_label.configure(width=wrap)
+            root.update_idletasks()
 
         def finish(answer: str) -> None:
             box["answer"] = answer
@@ -185,17 +196,14 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
             except Exception:
                 pass
 
-        bar = tk.Frame(frame, bg="#f3efe3")
-        bar.pack(fill="x", side="bottom")
-
         for option in options:
             if option["kind"] == "input":
                 hint = option["label"]
-                entry = tk.Entry(bar, font=("Microsoft YaHei", button_size), width=20, relief="flat",
-                                 bg="#ffffff", fg="#9aa79a")
+                entry = tk.Entry(bar, width=20, relief="flat", bg="#ffffff", fg="#9aa79a",
+                                 font=("Microsoft YaHei", base_button))
                 entry.pack(side="left", padx=(0, 8), ipady=5)
-                # 提示文字做成真占位符：显示在输入框里，一聚焦就清掉
                 entry.insert(0, hint)
+                sized.append((entry, base_button))
 
                 def on_focus_in(_event, ent=entry, tip=hint):
                     if ent.get() == tip:
@@ -216,41 +224,75 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
                 entry.bind("<FocusIn>", on_focus_in)
                 entry.bind("<FocusOut>", on_focus_out)
                 entry.bind("<Return>", lambda _e, f=submit: f())
-                tk.Button(
-                    bar, text=option.get("send") or "发送", relief="flat", padx=16, pady=4,
-                    bg="#e2ddcc", fg="#10160f", font=("Microsoft YaHei", button_size), command=submit,
-                ).pack(side="left", padx=(0, 8))
+                send_btn = tk.Button(bar, text=option.get("send") or "发送", relief="flat",
+                                     padx=16, pady=4, bg="#e2ddcc", fg="#10160f",
+                                     font=("Microsoft YaHei", base_button), command=submit)
+                send_btn.pack(side="left", padx=(0, 8))
+                sized.append((send_btn, base_button))
             elif option["kind"] == "primary":
-                tk.Button(
+                btn = tk.Button(
                     bar, text=option["label"], relief="flat", padx=20, pady=5,
                     bg="#2f4f3e", fg="#f3efe3", activebackground="#3f6b52", activeforeground="#ffffff",
-                    font=("Microsoft YaHei", button_size),
+                    font=("Microsoft YaHei", base_button),
                     command=lambda o=option: finish(o["label"]),
-                ).pack(side="right", padx=(8, 0))
+                )
+                btn.pack(side="right", padx=(8, 0))
+                sized.append((btn, base_button))
             else:
-                tk.Button(
+                btn = tk.Button(
                     bar, text=option["label"], relief="flat", padx=18, pady=5,
-                    bg="#e2ddcc", fg="#10160f", font=("Microsoft YaHei", button_size),
+                    bg="#e2ddcc", fg="#10160f", font=("Microsoft YaHei", base_button),
                     command=lambda o=option: finish(o["label"]),
-                ).pack(side="right", padx=(8, 0))
+                )
+                btn.pack(side="right", padx=(8, 0))
+                sized.append((btn, base_button))
 
         if not options:
-            tk.Button(
-                bar, text="知道了", relief="flat", padx=20, pady=5,
-                bg="#2f4f3e", fg="#f3efe3", command=lambda: finish("知道了"),
-            ).pack(side="right")
+            btn = tk.Button(bar, text="知道了", relief="flat", padx=20, pady=5,
+                            bg="#2f4f3e", fg="#f3efe3", font=("Microsoft YaHei", base_button),
+                            command=lambda: finish("知道了"))
+            btn.pack(side="right")
+            sized.append((btn, base_button))
 
         # 右上角关掉也算「关掉了」
         root.protocol("WM_DELETE_WINDOW", lambda: finish("（关掉了）"))
 
-        # 退出全屏放右上角（主人要求）
         if fullscreen:
+            # 退出全屏放右上角（主人要求）
             quit_btn = tk.Button(
                 root, text="退出全屏", relief="flat", padx=12, pady=3,
-                bg="#e2ddcc", fg="#10160f",
+                bg="#e2ddcc", fg="#10160f", font=("Microsoft YaHei", base_button),
                 command=lambda: root.attributes("-fullscreen", False),
             )
             quit_btn.place(relx=1.0, x=-12, y=10, anchor="ne")
+            sized.append((quit_btn, base_button))
+            root.attributes("-fullscreen", True)
+        else:
+            limit_w, limit_h = int(screen_w * 0.9), int(screen_h * 0.9)
+            if auto_fit:
+                # 先把窗口放到屏幕上，再逐档放大文字，量出来的内容放得下就留着
+                root.geometry("%dx%d+0+0" % (min(win_w, screen_w), min(win_h, screen_h)))
+                root.update_idletasks()
+                best = _FIT_STEPS[0]
+                for scale in _FIT_STEPS:
+                    apply_scale(scale)
+                    if root.winfo_reqwidth() <= limit_w and root.winfo_reqheight() <= limit_h:
+                        best = scale
+                    else:
+                        break
+                apply_scale(best)
+                root.update_idletasks()
+                w = min(max(root.winfo_reqwidth() + 30, 360), int(screen_w * 0.96))
+                h = min(max(root.winfo_reqheight() + 24, 180), int(screen_h * 0.96))
+            else:
+                w, h = min(win_w, int(screen_w * 0.96)), min(win_h, int(screen_h * 0.96))
+                apply_scale(1.0)
+
+            root.geometry(
+                "%dx%d+%d+%d"
+                % (w, h, max(screen_w // 2 - w // 2, 0), max(screen_h // 3, 0))
+            )
+
         root.mainloop()
 
     threading.Thread(target=show, daemon=True).start()
@@ -262,6 +304,7 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
     if done is not None and not done.wait(120):
         return False, "等了两分钟没人回"
     return True, f"回答：{box['answer']}"
+
 
 
 def cmd_open_url(args: dict) -> tuple[bool, str]:

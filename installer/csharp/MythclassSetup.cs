@@ -30,7 +30,7 @@ namespace MythclassSetup
         // 对话框和「程序和功能」里给用户看的全名
         public const string DisplayName = "Mythclass 若思班级一体机管理系统";
         public const string ExeName = "MythclassClient.exe";
-        public const string Version = "2.4.0";
+        public const string Version = "2.4.2";
         public const string DefaultDir = @"C:\Program Files (x86)\Mythclass";
         public const string RegPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MythclassClient";
         public const string PayloadResource = "payload.zip";
@@ -87,6 +87,13 @@ namespace MythclassSetup
                 {
                     var engine = new InstallEngine();
                     engine.Install(optTarget ?? DefaultDir, optStartMenu, optDesktop, !optNoLaunch, null);
+
+                    // 不许降级：装过更高版本就退出去（退出码 5）
+                    if (!string.IsNullOrEmpty(engine.LastError))
+                    {
+                        Console.WriteLine(engine.LastError);
+                        return 5;
+                    }
                     // 顺手把卸载密码设上（批量部署时防止学生自己卸）
                     if (!string.IsNullOrEmpty(uninstallPassword))
                     {

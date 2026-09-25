@@ -14,6 +14,9 @@ namespace MythclassSetup
         public Action<string> OnStep;
         public Action<int> OnProgress;
 
+        /// <summary>装不下去的原因（比如不许降级），静默安装靠它判断退出码</summary>
+        public string LastError = "";
+
         void Step(string msg)
         {
             Program.TryLog(msg);
@@ -69,6 +72,83 @@ namespace MythclassSetup
                 File.WriteAllText(Path.Combine(dir, "guardian-stop.flag"), "install");
             }
             catch { }
+        }
+
+        /// <summary>把 "2.4.0" 拆成数字，好比较大小；认不出来就返回 null</summary>
+        static int[] ParseVersion(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            var parts = text.Trim().TrimStart('v', 'V').Split('.');
+            var nums = new int[parts.Length];
+            for (int i = 0; i < parts.Length; i++)
+            {
+                int n;
+                var digits = new string(Array.FindAll(parts[i].ToCharArray(), char.IsDigit));
+                if (!int.TryParse(digits, out n)) return null;
+                nums[i] = n;
+            }
+            return nums.Length == 0 ? null : nums;
+        }
+
+        static int CompareVersion(int[] a, int[] b)
+        {
+            if (a == null || b == null) return 0;
+            int len = Math.Max(a.Length, b.Length);
+            for (int i = 0; i < len; i++)
+            {
+                int x = i < a.Length ? a[i] : 0;
+                int y = i < b.Length ? b[i] : 0;
+                if (x != y) return x > y ? 1 : -1;
+            }
+            return 0;
+        }
+
+        /// <summary>注册表里记着的安装目录</summary>
+        static string InstalledDir()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(Program.RegPath))
+                {
+                    if (key != null)
+                    {
+                        var loc = key.GetValue("InstallLocation") as string;
+                        if (!string.IsNullOrEmpty(loc)) return loc;
+                    }
+                }
+            }
+            catch { }
+            return "";
+        }
+
+        /// <summary>
+        /// 装过更高版本就不许降级。
+        /// 返回空串表示可以装；否则返回要显示给用户的那句话。
+        /// 两个地方都看一眼：这次选的目标目录，以及注册表里记着的目录。
+        /// </summary>
+        public string DowngradeMessage(string targetDir)
+        {
+            var mine = ParseVersion(Program.Version);
+            if (mine == null) return "";
+
+            var dirs = new string[] { targetDir, InstalledDir() };
+            foreach (var dir in dirs)
+            {
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) continue;
+                var vf = Path.Combine(dir, "version.txt");
+                if (!File.Exists(vf)) continue;
+                string old;
+                try { old = File.ReadAllText(vf).Trim(); }
+                catch { continue; }
+                if (old.Length == 0) continue;
+
+                if (CompareVersion(ParseVersion(old), mine) > 0)
+                {
+                    return "这台机器上已经装了更新的版本（v" + old + "），不能降级安装。"
+                         + "要装这个旧版，请先卸载再装。";
+                }
+            }
+            return "";
         }
 
         /// <summary>跑个外部命令，返回退出码（放防火墙规则要看它成没成）</summary>
@@ -308,6 +388,15 @@ namespace MythclassSetup
             {
                 Progress(3);
                 StopOldClient();
+
+                // 装过更高版本就不许降级
+                var blocked = DowngradeMessage(targetDir);
+                if (blocked.Length > 0)
+                {
+                    LastError = blocked;
+                    Step(blocked);
+                    return;
+                }
 
                 var old = ClearOldVersion(targetDir);
                 if (old.Length > 0 && old != "not-ours") Step("  发现旧版本 " + old + "，已清掉");
