@@ -48,11 +48,28 @@ namespace MythclassSetup
         [STAThread]
         static int Main(string[] args)
         {
-            // 设置卸载密码不需要提权（只是写个哈希），先处理掉
+            // 设置卸载密码：先处理（不用走后面的卸载流程），
+            // 但必须管理员权限 —— 否则学生自己设一个密码就能把客户端卸了
             for (int i = 0; i < args.Length; i++)
             {
-                if (args[i].ToLowerInvariant() == "--set-password" && i + 1 < args.Length)
-                    return SetPassword(args[i + 1]);
+                if (args[i].ToLowerInvariant() != "--set-password" || i + 1 >= args.Length) continue;
+                if (!optNoElevate && !IsAdmin())
+                {
+                    try
+                    {
+                        var psi = new ProcessStartInfo(Application.ExecutablePath, JoinArgs(args));
+                        psi.Verb = "runas";
+                        psi.UseShellExecute = true;
+                        Process.Start(psi);
+                    }
+                    catch
+                    {
+                        MessageBox.Show("设置卸载密码需要管理员权限。", Program.DisplayName,
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                    return 0;
+                }
+                return SetPassword(args[i + 1]);
             }
 
             for (int i = 0; i < args.Length; i++)
@@ -115,15 +132,34 @@ namespace MythclassSetup
                 string account = optUsername ?? "";
                 var tries = 0;
                 var hint = "输入 Mythclass 的密码。\r\n\r\n" +
-                           "本机的管理密码可以直接用；也可以填教师账号 + 密码。";
+                           "本机的管理密码可以直接用（重装过客户端的话会重置成默认的 admin123）；\r\n" +
+                           "也可以填教师账号 + 密码。";
 
                 while (true)
                 {
                     if (string.IsNullOrEmpty(given))
                     {
-                        using (var dialog = new MythPasswordDialog(hint))
+                        using (var dialog = new MythPasswordDialog(hint, MythclassPassword.DescribeCredentials()))
                         {
-                            if (dialog.ShowDialog() != DialogResult.OK) return 0;
+                            var result = dialog.ShowDialog();
+                            if (result == DialogResult.Ignore)
+                            {
+                                // 走 Windows 凭据那条路
+                                string who;
+                                var cred = WindowsCredential.Ask(
+                                    "请输入一个管理员账户的密码。\r\n\r\n（Mythclass 密码忘了的话用这条）",
+                                    "卸载需要管理员密码", out who);
+                                if (cred == WindowsCredential.Result.Ok)
+                                {
+                                    Program.TryLog("卸载：管理员账户验证通过（" + who + "）");
+                                    break;
+                                }
+                                hint = cred == WindowsCredential.Result.Cancelled
+                                    ? "输入已取消。\r\n\r\n本机的管理密码可以直接用；也可以填教师账号 + 密码。"
+                                    : "这个账户不是管理员，或者密码不对。\r\n\r\n本机的管理密码可以直接用；也可以填教师账号 + 密码。";
+                                continue;
+                            }
+                            if (result != DialogResult.OK) return 0;
                             given = dialog.Password;
                             if (!string.IsNullOrEmpty(dialog.Username)) account = dialog.Username;
                         }
@@ -172,7 +208,8 @@ namespace MythclassSetup
                     }
                     // 每轮都用固定文案，别再往旧提示前面接（会越叠越长）
                     hint = "密码不对（" + message + "）。再试一次。\r\n\r\n" +
-                           "本机的管理密码可以直接用；也可以填教师账号 + 密码。";
+                           "提示：重装过客户端的话，本机管理密码会重置成默认的 admin123；\r\n" +
+                           "也可以填教师账号 + 密码（那个账号得绑定过这台机器）。";
                     given = null;
                 }
             }
@@ -435,10 +472,10 @@ namespace MythclassSetup
         readonly TextBox passwordBox;
         readonly TextBox userBox;
 
-        public MythPasswordDialog(string hint)
+        public MythPasswordDialog(string hint, string diagnostic)
         {
             Text = "卸载需要 Mythclass 密码";
-            ClientSize = new Size(470, 268);
+            ClientSize = new Size(470, 330);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterScreen;
             MaximizeBox = false;
@@ -459,15 +496,24 @@ namespace MythclassSetup
 
             Controls.Add(new Label
             {
+                Text = diagnostic,
+                ForeColor = Color.FromArgb(143, 168, 142),
+                BackColor = Color.Transparent,
+                Location = new Point(20, 84),
+                Size = new Size(430, 18)
+            });
+
+            Controls.Add(new Label
+            {
                 Text = "教师账号（只有要用服务端验证时才填）",
                 ForeColor = Color.FromArgb(143, 168, 142),
                 BackColor = Color.Transparent,
-                Location = new Point(20, 88),
+                Location = new Point(20, 112),
                 AutoSize = true
             });
             userBox = new TextBox
             {
-                Location = new Point(22, 110),
+                Location = new Point(22, 134),
                 Size = new Size(426, 26),
                 BackColor = Color.FromArgb(20, 27, 23),
                 ForeColor = Color.FromArgb(232, 239, 230),
@@ -477,16 +523,25 @@ namespace MythclassSetup
 
             Controls.Add(new Label
             {
+                Text = "忘了的话：重装过的默认是 admin123",
+                ForeColor = Color.FromArgb(120, 140, 120),
+                BackColor = Color.Transparent,
+                Location = new Point(20, 216),
+                AutoSize = true
+            });
+
+            Controls.Add(new Label
+            {
                 Text = "Mythclass 密码",
                 ForeColor = Color.FromArgb(143, 168, 142),
                 BackColor = Color.Transparent,
-                Location = new Point(20, 146),
+                Location = new Point(20, 170),
                 AutoSize = true
             });
             passwordBox = new TextBox
             {
                 UseSystemPasswordChar = true,
-                Location = new Point(22, 168),
+                Location = new Point(22, 192),
                 Size = new Size(426, 26),
                 BackColor = Color.FromArgb(20, 27, 23),
                 ForeColor = Color.FromArgb(232, 239, 230),
@@ -498,7 +553,7 @@ namespace MythclassSetup
             {
                 Text = "确定",
                 DialogResult = DialogResult.OK,
-                Location = new Point(282, 214),
+                Location = new Point(282, 276),
                 Size = new Size(80, 32),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(63, 107, 82),
@@ -511,7 +566,7 @@ namespace MythclassSetup
             {
                 Text = "取消",
                 DialogResult = DialogResult.Cancel,
-                Location = new Point(370, 214),
+                Location = new Point(370, 276),
                 Size = new Size(80, 32),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(20, 27, 23),
@@ -519,6 +574,20 @@ namespace MythclassSetup
             };
             cancel.FlatAppearance.BorderColor = Color.FromArgb(42, 58, 46);
             Controls.Add(cancel);
+
+            // 退路：知道任何一个管理员账户密码也能卸（学生两个都不知道）
+            var admin = new Button
+            {
+                Text = "用管理员账户密码",
+                DialogResult = DialogResult.Ignore,
+                Location = new Point(20, 276),
+                Size = new Size(150, 32),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(27, 36, 30),
+                ForeColor = Color.FromArgb(201, 214, 198)
+            };
+            admin.FlatAppearance.BorderColor = Color.FromArgb(42, 58, 46);
+            Controls.Add(admin);
 
             AcceptButton = ok;
             CancelButton = cancel;

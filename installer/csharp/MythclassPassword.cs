@@ -49,6 +49,24 @@ namespace MythclassSetup
             return Source.None;
         }
 
+        /// <summary>这台机器上找到哪些凭据 —— 显示在密码框上，方便判断哪条路不通</summary>
+        public static string DescribeCredentials()
+        {
+            var cfg = ParseConfig() != null;
+            var install = File.Exists(UninstallPath);
+            var uid = "";
+            var server = "";
+            ReadIdentity(out uid, out server);
+
+            var bits = new System.Collections.Generic.List<string>();
+            bits.Add(cfg ? "本机配置 ✓" : "本机配置 ✗");
+            bits.Add(install ? "卸载密码 ✓" : "卸载密码 ✗");
+            if (cfg) bits.Add(string.IsNullOrEmpty(uid) ? "机器 ID ✗" : "机器 ID ✓");
+            if (!string.IsNullOrEmpty(server))
+                bits.Add(IsUsableUrl(server) ? "服务器地址 ✓" : "服务器地址 ✗");
+            return string.Join("，", bits.ToArray());
+        }
+
         /// <summary>本机的客户端 ID 和服务器地址（从 config.json 里正经解析）</summary>
         public static void ReadIdentity(out string clientUid, out string serverUrl)
         {
