@@ -82,7 +82,29 @@ class Tray:
     def _status_text(self) -> str:
         app = self.app
         state = "已连接" if app.connected else "重连中"
-        return f"{state} · {app.server_url or '没服务器'}\n机器 ID：{app.client_uid}"
+
+        lines = [
+            f"{state} · {app.server_url or '没服务器'}",
+            f"机器 ID：{app.client_uid}",
+            f"版本：v{__version__}",
+        ]
+
+        # 本地网页：老师和这台机器在同一个局域网时，直接开这个地址就能控制
+        # （这里显示出来，省得老师去猜该访问什么）
+        try:
+            from . import identity
+
+            ips = identity.local_ips()
+            ip = ips[0] if ips else "本机内网IP"
+            port = getattr(app.web, "port", 26925)
+            if app.web and app.web.running:
+                lines.append(f"本地网页：http://{ip}:{port}/")
+            else:
+                lines.append("本地网页：没开（这一版或端口有问题）")
+        except Exception:
+            pass
+
+        return "\n".join(lines)
 
     def _show_status(self) -> None:
         def run():
