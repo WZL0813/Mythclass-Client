@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -121,32 +122,141 @@ namespace MythclassSetup
             return "";
         }
 
+        // 签名用的钥匙：藏在这个 exe 里。不是防破解，是防「手一抖改个文件就降级」
+        const string RecordSecret = "Mythclass-8f2c41d7a05e4b93-install-record";
+
+        static string Sign(string text)
+        {
+            try
+            {
+                using (var mac = new System.Security.Cryptography.HMACSHA256(
+                           System.Text.Encoding.UTF8.GetBytes(RecordSecret)))
+                {
+                    var hash = mac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(text));
+                    var sb = new System.Text.StringBuilder();
+                    foreach (var b in hash) sb.Append(b.ToString("x2"));
+                    return sb.ToString();
+                }
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>带签名的隐藏记录（改了就验不过）</summary>
+        static string RecordFile(string dir)
+        {
+            return Path.Combine(dir, ".mythclass-install");
+        }
+
+        /// <summary>把「装的是哪个版本」记到多处：改一处降不下去</summary>
+        public void WriteVersionRecords(string dir)
+        {
+            try { File.WriteAllText(Path.Combine(dir, "version.txt"), Program.Version); }
+            catch { }
+            try
+            {
+                var rf = RecordFile(dir);
+                File.WriteAllText(rf, Program.Version + "|" + Sign(Program.Version));
+                File.SetAttributes(rf, FileAttributes.Hidden);
+            }
+            catch { }
+        }
+
+        /// <summary>这个目录里所有能信得过的版本记录（取最高那个用）</summary>
+        static List<string> LocalRecords(string dir)
+        {
+            var found = new List<string>();
+            if (string.IsNullOrEmpty(dir)) return found;
+
+            try
+            {
+                var vf = Path.Combine(dir, "version.txt");
+                if (File.Exists(vf))
+                {
+                    var v = File.ReadAllText(vf).Trim();
+                    if (v.Length > 0) found.Add(v);
+                }
+            }
+            catch { }
+
+            try
+            {
+                var rf = RecordFile(dir);
+                if (File.Exists(rf))
+                {
+                    var parts = File.ReadAllText(rf).Trim().Split('|');
+                    if (parts.Length == 2 && parts[1] == Sign(parts[0])) found.Add(parts[0]);
+                    // 签名对不上：说明被手改过，这条不算数（另外两处还压着）
+                }
+            }
+            catch { }
+
+            return found;
+        }
+
+        /// <summary>注册表里记着的版本</summary>
+        static List<string> RegistryRecords()
+        {
+            var found = new List<string>();
+            try
+            {
+                using (var key = Registry.LocalMachine.OpenSubKey(Program.RegPath))
+                {
+                    if (key != null)
+                    {
+                        foreach (var name in new string[] { "Version", "DisplayVersion" })
+                        {
+                            var v = key.GetValue(name) as string;
+                            if (!string.IsNullOrEmpty(v)) found.Add(v.Trim());
+                        }
+                    }
+                }
+            }
+            catch { }
+            return found;
+        }
+
+        /// <summary>
+        /// 这台机器上认定「已经装过的最高版本」。
+        /// 三处取最高：version.txt、签名隐藏记录、注册表。
+        /// 只改 version.txt 是没用的 —— 另外两处还记着真实版本。
+        /// </summary>
+        public string InstalledVersion(string targetDir)
+        {
+            var all = new List<string>();
+            all.AddRange(LocalRecords(targetDir));
+            all.AddRange(LocalRecords(InstalledDir()));
+            all.AddRange(RegistryRecords());
+
+            string best = "";
+            var bestNums = (int[])null;
+            foreach (var v in all)
+            {
+                var nums = ParseVersion(v);
+                if (nums == null) continue;
+                if (bestNums == null || CompareVersion(nums, bestNums) > 0)
+                {
+                    bestNums = nums;
+                    best = v;
+                }
+            }
+            return best;
+        }
+
         /// <summary>
         /// 装过更高版本就不许降级。
         /// 返回空串表示可以装；否则返回要显示给用户的那句话。
-        /// 两个地方都看一眼：这次选的目标目录，以及注册表里记着的目录。
         /// </summary>
         public string DowngradeMessage(string targetDir)
         {
             var mine = ParseVersion(Program.Version);
             if (mine == null) return "";
 
-            var dirs = new string[] { targetDir, InstalledDir() };
-            foreach (var dir in dirs)
+            var old = InstalledVersion(targetDir);
+            if (old.Length == 0) return "";
+            if (CompareVersion(ParseVersion(old), mine) > 0)
             {
-                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) continue;
-                var vf = Path.Combine(dir, "version.txt");
-                if (!File.Exists(vf)) continue;
-                string old;
-                try { old = File.ReadAllText(vf).Trim(); }
-                catch { continue; }
-                if (old.Length == 0) continue;
-
-                if (CompareVersion(ParseVersion(old), mine) > 0)
-                {
-                    return "这台机器上已经装了更新的版本（v" + old + "），不能降级安装。"
-                         + "要装这个旧版，请先卸载再装。";
-                }
+                return "这台机器上已经装了更新的版本（v" + old + "），不能降级安装。"
+                     + "要装这个旧版，请先卸载再装。";
             }
             return "";
         }
@@ -221,7 +331,7 @@ namespace MythclassSetup
                 }
             }
 
-            File.WriteAllText(Path.Combine(targetDir, "version.txt"), Program.Version);
+            WriteVersionRecords(targetDir);
             // 卸载器是个 exe（带管理员清单，双击就弹 UAC），
             // 不再是 cmd —— 老版本留下的 uninstall.cmd 顺手清掉
             WriteResource("uninstaller.exe", Path.Combine(targetDir, "MythclassUninstall.exe"));
@@ -350,6 +460,7 @@ namespace MythclassSetup
                     if (key == null) return;
                     key.SetValue("DisplayName", Program.AppName);
                     key.SetValue("DisplayVersion", Program.Version);
+                    key.SetValue("Version", Program.Version);
                     key.SetValue("Publisher", "Ryokuryuneko");
                     key.SetValue("InstallLocation", targetDir);
                     key.SetValue("DisplayIcon", Path.Combine(targetDir, Program.ExeName));
