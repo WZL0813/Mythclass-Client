@@ -163,6 +163,26 @@ namespace MythclassSetup
             }
         }
 
+        /// <summary>设置卸载密码（存 PBKDF2-SHA256 哈希，和卸载器读的格式一致）</summary>
+        public static void SetUninstallPassword(string password)
+        {
+            if (string.IsNullOrEmpty(password)) return;
+            var dir = @"C:\ProgramData\Mythclass";
+            Directory.CreateDirectory(dir);
+
+            var salt = new byte[16];
+            using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create()) rng.GetBytes(salt);
+            byte[] hash;
+            using (var kdf = new System.Security.Cryptography.Rfc2898DeriveBytes(
+                       password, salt, 100000, System.Security.Cryptography.HashAlgorithmName.SHA256))
+            {
+                hash = kdf.GetBytes(32);
+            }
+            var json = "{\"salt\":\"" + Convert.ToBase64String(salt) + "\",\"hash\":\"" +
+                       Convert.ToBase64String(hash) + "\",\"iterations\":100000}";
+            File.WriteAllText(Path.Combine(dir, "uninstall.json"), json, System.Text.Encoding.UTF8);
+        }
+
         /// <summary>建快捷方式（用 WScript.Shell 的 COM，免得引一堆 interop）</summary>
         public void CreateShortcuts(string targetDir, bool startMenu, bool desktop)
         {

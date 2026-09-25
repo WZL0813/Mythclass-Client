@@ -141,25 +141,9 @@ namespace MythclassSetup
                     {
                         using (var dialog = new MythPasswordDialog(hint, MythclassPassword.DescribeCredentials()))
                         {
-                            var result = dialog.ShowDialog();
-                            if (result == DialogResult.Ignore)
-                            {
-                                // 走 Windows 凭据那条路
-                                string who;
-                                var cred = WindowsCredential.Ask(
-                                    "请输入一个管理员账户的密码。\r\n\r\n（Mythclass 密码忘了的话用这条）",
-                                    "卸载需要管理员密码", out who);
-                                if (cred == WindowsCredential.Result.Ok)
-                                {
-                                    Program.TryLog("卸载：管理员账户验证通过（" + who + "）");
-                                    break;
-                                }
-                                hint = cred == WindowsCredential.Result.Cancelled
-                                    ? "输入已取消。\r\n\r\n本机的管理密码可以直接用；也可以填教师账号 + 密码。"
-                                    : "这个账户不是管理员，或者密码不对。\r\n\r\n本机的管理密码可以直接用；也可以填教师账号 + 密码。";
-                                continue;
-                            }
-                            if (result != DialogResult.OK) return 0;
+                            // 只认 Mythclass 密码：窗口上的「用管理员账户密码」那条路
+                            // 已经拿掉 —— 系统管理员密码在教室里可能就是学生知道的那串
+                            if (dialog.ShowDialog() != DialogResult.OK) return 0;
                             given = dialog.Password;
                             if (!string.IsNullOrEmpty(dialog.Username)) account = dialog.Username;
                         }
@@ -172,19 +156,20 @@ namespace MythclassSetup
                         break;
                     }
 
-                    // 这台机器上没有任何密码材料（装了但从没跑过客户端，
-                    // 也没设过卸载密码）—— 那就退回「必须是提权进程」这条底线，
-                    // 免得把人锁死在外面。
+                    // 这台机器上没有任何 Mythclass 密码材料（装了但从没跑过客户端，
+                    // 也没设过卸载密码）。
+                    // 不能拿「是不是管理员」当后门 —— 管理员账户上提权是免费的，
+                    // 等于不设防。所以明确拒绝，并告诉他怎么补救。
                     string cfgUid, cfgServer;
                     MythclassPassword.ReadIdentity(out cfgUid, out cfgServer);
                     if (string.IsNullOrEmpty(cfgUid) &&
                         !File.Exists(Path.Combine(@"C:\ProgramData\Mythclass", "uninstall.json")))
                     {
-                        Program.TryLog("卸载：机器上没有任何密码材料，退回提权检查");
-                        if (IsAdmin()) break;
+                        Program.TryLog("卸载：机器上没有任何 Mythclass 密码材料，拒绝");
                         MessageBox.Show(
-                            "这台机器还没跑过客户端，也没设过卸载密码。\r\n\r\n" +
-                            "请用管理员身份运行本程序再卸载。",
+                            "这台机器上找不到任何 Mythclass 密码。\r\n\r\n" +
+                            "先运行一次客户端（它会生成默认密码 admin123），\r\n" +
+                            "或者用 MythclassUninstall.exe --set-password 设一个卸载密码。",
                             Program.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return 4;
                     }
@@ -578,19 +563,6 @@ namespace MythclassSetup
             cancel.FlatAppearance.BorderColor = Color.FromArgb(42, 58, 46);
             Controls.Add(cancel);
 
-            // 退路：知道任何一个管理员账户密码也能卸（学生两个都不知道）
-            var admin = new Button
-            {
-                Text = "用管理员账户密码",
-                DialogResult = DialogResult.Ignore,
-                Location = new Point(20, 276),
-                Size = new Size(150, 32),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(27, 36, 30),
-                ForeColor = Color.FromArgb(201, 214, 198)
-            };
-            admin.FlatAppearance.BorderColor = Color.FromArgb(42, 58, 46);
-            Controls.Add(admin);
 
             AcceptButton = ok;
             CancelButton = cancel;
