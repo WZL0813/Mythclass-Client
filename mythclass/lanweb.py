@@ -612,12 +612,12 @@ const $ = (id) => document.getElementById(id);
   const SHAPE_COUNT = 700;
   const FREE_COUNT = 130;
   const SPEED = 0.3;
-  // 和教师端星幕一套时间轴：
-  //   先乱闪 850ms（正好接着开屏淡出）→ 汇聚 1750ms → 停 900ms → 控制台显现
-  const T_STARS = 850;
-  const T_GATHER = 1750;
-  const T_HOLD = 900;
-  const T_TOTAL = T_STARS + T_GATHER + T_HOLD;
+  // 反过来：先把 Mythclass 亮出来，再散成一团星，然后控制台显现
+  //   t=850 开屏淡完（字已经在后面等着）→ 字亮 1100ms → 散开 1500ms
+  const T_SPLASH = 850;
+  const T_WORD = 1100;
+  const T_SCATTER = 1500;
+  const T_TOTAL = T_SPLASH + T_WORD + T_SCATTER + 150;
 
   let w = 0, h = 0, shape = [], free = [], startedAt = 0, lastAt = 0, revealed = false;
 
@@ -694,18 +694,33 @@ const $ = (id) => document.getElementById(id);
       ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2); ctx.fill();
     }
 
+    // ease = 1 表示贴在字上，= 0 表示已经散回自己该待的地方
+    let ease = 1;
+    if (t > T_SPLASH + T_WORD) {
+      const p = Math.min(1, (t - T_SPLASH - T_WORD) / T_SCATTER);
+      ease = 1 - p * p * (3 - 2 * p); // 平滑一点，别像弹簧
+    }
+    // 字刚亮起来那一下给个渐显，别硬蹦出来
+    const rising = Math.min(1, Math.max(0, (t - (T_SPLASH - 250)) / 350));
+
     for (const s of shape) {
-      const span = 1 - s.delay || 1;
-      // 前 850ms 先乱闪，之后才开始往字上飞
-      const local = Math.min(1, Math.max(0, (t - T_STARS) / T_GATHER - s.delay) / span);
-      const ease = 1 - Math.pow(1 - local, 3);
-      const jitter = (1 - ease) * 5;
-      const px = s.x + (s.tx - s.x) * ease + Math.sin(now / 130 + s.twinkle) * jitter;
-      const py = s.y + (s.ty - s.y) * ease + Math.cos(now / 150 + s.twinkle) * jitter;
+      // 散开时每个星子慢半拍，看着才像"散"不像"炸"
+      const spread = Math.max(0, Math.min(1, ease * 1.0 + s.delay * (1 - ease) * 0.9));
+      // 散开之后还要往外飘一点，别原地不动
+      const away = (1 - ease) * (1 - ease) * (40 + s.delay * 120);
+      const jitter = ease * 1.6;
+      const px = s.x + (s.tx - s.x) * ease + Math.sin(now / 130 + s.twinkle) * jitter
+                 - Math.sin(s.twinkle) * away;
+      const py = s.y + (s.ty - s.y) * ease + Math.cos(now / 150 + s.twinkle) * jitter
+                 - Math.cos(s.twinkle) * away * 0.7;
+
       const breathe = 0.3 + 0.16 * Math.sin(now / 700 + s.twinkle);
-      ctx.globalAlpha = Math.max(0, Math.min(1, breathe * (0.35 + 0.65 * ease)));
+      // 贴字上时亮，散开时越来越淡，最后融进本来就漂着的那群
+      const lit = 0.35 + 0.65 * ease;
+      ctx.globalAlpha = Math.max(0, Math.min(1, breathe * lit * rising));
       ctx.fillStyle = s.color;
-      ctx.beginPath(); ctx.arc(px, py, s.size, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(px, py, Math.max(0.2, s.size), 0, Math.PI * 2); ctx.fill();
+      void spread;
     }
 
     ctx.globalAlpha = 1;
@@ -731,7 +746,7 @@ const $ = (id) => document.getElementById(id);
 setTimeout(() => {
   const sp = document.getElementById('splash');
   if (sp) sp.classList.add('gone');
-}, 850);   // 和星子开始汇聚对齐：先淡开屏，星野浮现，然后星子聚成字
+}, 850);   // 开屏淡出的同时，后面那个 Mythclass 正好亮起来
 const key = () => localStorage.getItem('mythkey') || '';
 const RAIL_KEY = 'myth.lan.rail';
 const EV_KEY = 'myth.lan.events';
