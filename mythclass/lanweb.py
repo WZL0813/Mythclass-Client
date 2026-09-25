@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import parse_qs, quote, urlparse
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -120,8 +121,7 @@ class LanWeb:
                 # 链接里带密钥就直接对上暗号：老师点一下就能用，
                 # 不用手输、也少一步（?key=xxxx）
                 if "key=" in query:
-                    from urllib.parse import parse_qs
-
+                    
                     given = (parse_qs(query).get("key") or [""])[0].strip()
                     if outer.trust.check_any(given):
                         self.send_response(200)
@@ -145,10 +145,80 @@ class LanWeb:
                     self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
                     return
 
+                if path == "/api/screenshot":
+                    """截一张全分辨率的图直接回给页面（不缩、不压，尽量清晰）"""
+                    getter = getattr(outer, "screenshot", None)
+                    data = getter() if callable(getter) else None
+                    if not data:
+                        why = ""
+                        err = getattr(outer, "frame_error", None)
+                        if callable(err):
+                            why = err() or ""
+                        self._json(503, {"error": "NO_SHOT", "message": "截不到屏" + (f"（{why}）" if why else "")})
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Disposition", 'inline; filename="mythclass-shot.png"')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+
                 if path in ("/api/file-logs", "/api/logs"):
                     getter = getattr(outer, "file_logs", None)
                     rows = getter(200) if callable(getter) else []
                     self._json(200, {"items": rows})
+                    return
+
+                if path == "/api/audio":
+                    getter = getattr(outer, "audio_items", None)
+                    self._json(200, {"items": getter() if callable(getter) else []})
+                    return
+
+                if path == "/api/usage":
+                    getter = getattr(outer, "usage_items", None)
+                    self._json(200, {"items": getter() if callable(getter) else []})
+                    return
+
+                if path == "/api/windows":
+                    getter = getattr(outer, "window_items", None)
+                    self._json(200, {"items": getter() if callable(getter) else []})
+                    return
+
+                if path.startswith("/api/files"):
+                    query = parse_qs(urlparse(self.path).query)
+                    want = (query.get("path") or [""])[0]
+                    getter = getattr(outer, "dir_listing", None)
+                    data = getter(want) if callable(getter) else None
+                    if data is None:
+                        self._json(404, {"error": "NO_DIR", "message": "看不了这个目录"})
+                    else:
+                        self._json(200, data)
+                    return
+
+                if path.startswith("/api/file"):
+                    query = parse_qs(urlparse(self.path).query)
+                    want = (query.get("path") or [""])[0]
+                    getter = getattr(outer, "read_file", None)
+                    blob = getter(want) if callable(getter) else None
+                    if blob is None:
+                        self._json(404, {"error": "NO_FILE", "message": "读不到这个文件"})
+                        return
+                    name, data = blob
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.send_header(
+                        "Content-Disposition", f"attachment; filename*=UTF-8''{quote(name)}"
+                    )
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+
+                if path == "/api/quiet":
+                    getter = getattr(outer, "quiet_state", None)
+                    self._json(200, getter() if callable(getter) else {})
                     return
 
                 if path == "/api/settings":
@@ -211,6 +281,25 @@ class LanWeb:
                     else:
                         outer.log(f"本地网页：{self._ip()} 密钥不对。")
                         self._json(401, {"ok": False, "error": "KEY_REJECTED", "message": "密钥不对"})
+                    return
+
+                if path == "/api/windows/close":
+                    handler = getattr(outer, "close_window", None)
+                    ok2, msg = handler(int(payload.get("hwnd") or 0)) if callable(handler) else (False, "不支持")
+                    self._json(200 if ok2 else 400, {"ok": ok2, "message": msg})
+                    return
+
+                if path == "/api/quiet":
+                    handler = getattr(outer, "set_quiet", None)
+                    data = handler(bool(payload.get("on", True)), str(payload.get("text") or "")) \
+                        if callable(handler) else {"on": False}
+                    self._json(200, data)
+                    return
+
+                if path == "/api/hand":
+                    handler = getattr(outer, "set_hand", None)
+                    data = handler(bool(payload.get("on", True))) if callable(handler) else {"hand": False}
+                    self._json(200, data)
                     return
 
                 if path == "/api/command":
@@ -600,6 +689,22 @@ PAGE = """<!doctype html>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 5h11l5 5v9H4z"/><path d="M8 12h8M8 15h5"/></svg>
             文件记录
           </button>
+          <button class="tab" data-pane="usage">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+            使用时长
+          </button>
+          <button class="tab" data-pane="disk">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 7h6l2 2h10v9H3z"/></svg>
+            磁盘
+          </button>
+          <button class="tab" data-pane="window">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M3 9h18M8 20h8"/></svg>
+            窗口
+          </button>
+          <button class="tab" data-pane="audio">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 010 6"/></svg>
+            音频
+          </button>
           <button class="tab" data-pane="cmd">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 7l5 5-5 5"/><path d="M13 17h6"/></svg>
             命令
@@ -645,6 +750,62 @@ PAGE = """<!doctype html>
             <thead><tr><th style="width:150px">时间</th><th style="width:90px">动作</th><th>文件</th><th style="width:80px">大小</th></tr></thead>
             <tbody id="logsBody"><tr><td colspan="4" class="muted">点「刷新」拉一下。</td></tr></tbody>
           </table>
+        </div>
+
+        <div class="pane" id="pane-usage">
+          <div class="screen-head">
+            <button class="btn" id="usageRefresh">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 11-3-6.2M20 4v5h-5"/></svg>
+              刷新
+            </button>
+            <div class="stats"><span id="usageNow">—</span></div>
+          </div>
+          <table class="logs">
+            <thead><tr><th style="width:200px">程序</th><th style="width:120px">用了多久</th><th>最后一次在做什么</th></tr></thead>
+            <tbody id="usageBody"><tr><td colspan="3" class="muted">点「刷新」看看。</td></tr></tbody>
+          </table>
+          <p class="muted tiny">每 5 秒看一眼前台是哪个程序，只记「哪个程序、用了多久」，不记内容。</p>
+        </div>
+
+        <div class="pane" id="pane-disk">
+          <div class="screen-head">
+            <button class="btn" id="diskUp">上一级</button>
+            <input class="nt-input" id="diskPath" placeholder="C:\\ 或 D:\\课件" style="flex:1">
+            <button class="btn primary" id="diskGo">进去</button>
+          </div>
+          <table class="logs">
+            <thead><tr><th>名称</th><th style="width:90px">大小</th><th style="width:140px">改过的时间</th><th style="width:90px">操作</th></tr></thead>
+            <tbody id="diskBody"><tr><td colspan="4" class="muted">写个路径，点「进去」。</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="pane" id="pane-window">
+          <div class="screen-head">
+            <button class="btn" id="winRefresh">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 11-3-6.2M20 4v5h-5"/></svg>
+              刷新
+            </button>
+            <div class="stats"><span id="winCount">—</span></div>
+          </div>
+          <table class="logs">
+            <thead><tr><th style="width:150px">程序</th><th>窗口标题</th><th style="width:90px">状态</th><th style="width:80px">操作</th></tr></thead>
+            <tbody id="winBody"><tr><td colspan="4" class="muted">点「刷新」看看。</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="pane" id="pane-audio">
+          <div class="screen-head">
+            <button class="btn" id="audioRefresh">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 11-3-6.2M20 4v5h-5"/></svg>
+              刷新
+            </button>
+            <div class="stats"><span id="audioNow">—</span></div>
+          </div>
+          <table class="logs">
+            <thead><tr><th style="width:180px">程序</th><th>在放的窗口</th><th style="width:90px">音量</th><th style="width:90px">状态</th></tr></thead>
+            <tbody id="audioBody"><tr><td colspan="4" class="muted">点「刷新」看看。</td></tr></tbody>
+          </table>
+          <p class="muted tiny">看的是「哪些程序正在出声」的会话，和教师端那个音频页一样。</p>
         </div>
 
         <div class="pane" id="pane-cmd">
@@ -830,6 +991,11 @@ const EV_KEY = 'myth.lan.events';
 const TOOLS = [
   ['lock', '锁屏', 'M7 10V8a5 5 0 0110 0v2M5 10h14v10H5z'],
   ['message', '弹消息', 'M4 5h16v11H8l-4 4z'],
+  ['open_app', '开程序', 'M4 5h16v14H4zM8 9l3 3-3 3M13 15h4', { ask: '要开哪个程序？写完整路径或程序名，比如 notepad.exe' }],
+  ['open_url', '开网页', 'M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3a14 14 0 010 18 14 14 0 010-18', { ask: '要在这台机器上打开哪个网址？' }],
+  ['quiet', '黑屏安静', 'M4 5h16v14H4zM9 12h6', { ask: '黑屏上写点什么？留空就只黑屏。（学生叉不掉，右下角有举手按钮）' }],
+  ['quiet', '取消黑屏', 'M4 5h16v14H4zM9 12h6M4 4l16 16', { args: { on: false } }],
+  ['hand', '举手状态', 'M8 12V6a2 2 0 014 0v6M12 8a2 2 0 014 0v4M16 11a2 2 0 014 0v5a6 6 0 01-6 6h-2a6 6 0 01-6-6v-3a2 2 0 014 0'],
   ['screenshot', '截图', 'M4 8h3l2-2h6l2 2h3v11H4zM12 16a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z'],
   ['net_ban', '禁止上网', 'M12 3a9 9 0 100 18 9 9 0 000-18zM6 6l12 12'],
   ['net_allow', '放开上网', 'M12 3a9 9 0 100 18 9 9 0 000-18zM8 12.5l3 3 5-6'],
@@ -860,7 +1026,7 @@ $('tabEvent').onclick = () => { evTab = 'event'; $('tabEvent').classList.add('ac
 $('tabMessage').onclick = () => { evTab = 'message'; $('tabMessage').classList.add('active'); $('tabEvent').classList.remove('active'); renderEvents(); };
 
 // 标签页
-const panes = ['screen', 'logs', 'cmd', 'settings'];
+const panes = ['screen', 'logs', 'usage', 'disk', 'window', 'audio', 'cmd', 'settings'];
 function showPane(name) {
   panes.forEach((p) => {
     const btn = document.querySelector(`.tab[data-pane="${p}"]`);
@@ -870,6 +1036,10 @@ function showPane(name) {
   });
   if (name === 'logs') loadLogs();
   if (name === 'settings') loadSettings();
+  if (name === 'usage') loadUsage();
+  if (name === 'disk') loadDisk(diskPath || 'C:\\\\');
+  if (name === 'window') loadWindows();
+  if (name === 'audio') loadAudio();
 }
 document.querySelectorAll('.tab').forEach((b) => {
   b.onclick = () => showPane(b.dataset.pane);
@@ -902,6 +1072,91 @@ async function loadSettings() {
   document.getElementById('setKv').innerHTML = rows.map(([k, v]) => `<b>${k}</b><span>${v}</span>`).join('');
 }
 
+const fmtTime = (s) => {
+  const n = Math.round(Number(s) || 0);
+  if (n < 60) return n + ' 秒';
+  if (n < 3600) return Math.floor(n / 60) + ' 分 ' + (n % 60) + ' 秒';
+  return Math.floor(n / 3600) + ' 小时 ' + Math.floor((n % 3600) / 60) + ' 分';
+};
+const fmtSize = (b) => {
+  const n = Number(b) || 0;
+  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024) return (n / 1024).toFixed(0) + ' KB';
+  return n + ' B';
+};
+
+async function loadUsage() {
+  const { data } = await api('/api/usage');
+  const items = (data && data.items) || [];
+  document.getElementById('usageNow').textContent = items.length ? `${items.length} 个程序` : '还没数据';
+  document.getElementById('usageBody').innerHTML = items.length
+    ? items.map((r) => `<tr><td>${r.app}</td><td class="mono">${fmtTime(r.seconds)}</td><td class="muted">${r.title || ''}</td></tr>`).join('')
+    : '<tr><td colspan="3" class="muted">刚开机的话，用一会儿就有了。</td></tr>';
+}
+
+let diskPath = '';
+async function loadDisk(where) {
+  diskPath = where !== undefined ? where : document.getElementById('diskPath').value.trim();
+  const body = document.getElementById('diskBody');
+  body.innerHTML = '<tr><td colspan="4" class="muted">读取中…</td></tr>';
+  const { data } = await api('/api/files?path=' + encodeURIComponent(diskPath));
+  if (!data || !data.items) {
+    body.innerHTML = '<tr><td colspan="4" class="muted">看不了这个目录（可能没权限）。</td></tr>';
+    return;
+  }
+  document.getElementById('diskPath').value = data.path;
+  diskPath = data.path;
+  const rows = [];
+  (data.items || []).forEach((f) => {
+    const act = f.dir
+      ? `<button class="btn" data-into="${encodeURIComponent(f.name)}">进去</button>`
+      : `<button class="btn" data-dl="${encodeURIComponent(f.name)}">下载</button>`;
+    rows.push(`<tr><td>${f.dir ? '📁 ' : ''}${f.name}</td><td class="mono">${f.dir ? '—' : fmtSize(f.size)}</td><td class="mono muted">${f.mtime || ''}</td><td>${act}</td></tr>`);
+  });
+  body.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="4" class="muted">空目录。</td></tr>';
+  body.querySelectorAll('[data-into]').forEach((b) => {
+    b.onclick = () => {
+      const sep = diskPath.endsWith('\\\\') ? '' : '\\\\';
+      loadDisk(diskPath + sep + decodeURIComponent(b.dataset.into));
+    };
+  });
+  body.querySelectorAll('[data-dl]').forEach((b) => {
+    b.onclick = () => {
+      const sep = diskPath.endsWith('\\\\') ? '' : '\\\\';
+      const full = diskPath + sep + decodeURIComponent(b.dataset.dl);
+      window.open('/api/file?path=' + encodeURIComponent(full), '_blank');
+    };
+  });
+}
+
+async function loadWindows() {
+  const { data } = await api('/api/windows');
+  const items = (data && data.items) || [];
+  document.getElementById('winCount').textContent = items.length ? `${items.length} 个窗口` : '没有窗口';
+  const body = document.getElementById('winBody');
+  body.innerHTML = items.length
+    ? items.map((w) => `<tr><td>${w.app || '—'}</td><td>${w.title}${w.active ? ' · 当前' : ''}</td><td class="muted">${w.stateText || ''}</td><td><button class="btn" data-close="${w.hwnd}">关掉</button></td></tr>`).join('')
+    : '<tr><td colspan="4" class="muted">没看到有标题的窗口。</td></tr>';
+  body.querySelectorAll('[data-close]').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm('确定关掉这个窗口？')) return;
+      const { data: res } = await api('/api/windows/close', { hwnd: Number(b.dataset.close) });
+      logEvent((res && res.message) || '关掉了', !(res && res.ok));
+      loadWindows();
+    };
+  });
+}
+
+async function loadAudio() {
+  const { data } = await api('/api/audio');
+  const items = (data && data.items) || [];
+  document.getElementById('audioNow').textContent = items.length ? `${items.length} 个在出声` : '现在很安静';
+  document.getElementById('audioBody').innerHTML = items.length
+    ? items.map((a) => `<tr><td>${a.processName || a.app || '—'}</td><td>${a.title || ''}</td><td class="mono">${a.volume === undefined ? '' : Math.round(a.volume * 100) + '%'}</td><td class="muted">${a.state || ''}</td></tr>`).join('')
+    : '<tr><td colspan="4" class="muted">这会儿没有程序在放声音。</td></tr>';
+}
+
 async function runCmd(value) {
   const cmd = (value !== undefined ? value : document.getElementById('cmdInput').value).trim();
   if (!cmd) return;
@@ -923,6 +1178,14 @@ document.querySelectorAll('[data-preset]').forEach((b) => {
   };
 });
 document.getElementById('logsRefresh').onclick = loadLogs;
+document.getElementById('usageRefresh').onclick = loadUsage;
+document.getElementById('winRefresh').onclick = loadWindows;
+document.getElementById('audioRefresh').onclick = loadAudio;
+document.getElementById('diskGo').onclick = () => loadDisk();
+document.getElementById('diskUp').onclick = async () => {
+  const { data } = await api('/api/files?path=' + encodeURIComponent(diskPath));
+  if (data && data.parent) loadDisk(data.parent);
+};
 
 // 伸缩
 function applyFolds() {
@@ -1006,12 +1269,31 @@ $('authBtn').onclick = async () => {
 $('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('authBtn').click(); });
 
 // 工具条
-$('tools').innerHTML = TOOLS.map(([cmd, label, p]) =>
-  '<button class="tool" data-cmd="' + cmd + '" title="' + label + '">' + icon(p) + '<span>' + label + '</span></button>'
+$('tools').innerHTML = TOOLS.map(([cmd, label, p], i) =>
+  '<button class="tool" data-tool="' + i + '" title="' + label + '">' + icon(p) + '<span>' + label + '</span></button>'
 ).join('');
-document.querySelectorAll('[data-cmd]').forEach((b) => {
-  b.onclick = () => send(b.dataset.cmd);
+document.querySelectorAll('[data-tool]').forEach((b) => {
+  b.onclick = () => {
+    const [cmd, label, , extra] = TOOLS[Number(b.dataset.tool)];
+    if (extra && extra.args) return send(cmd, extra.args);
+    if (extra && extra.ask !== undefined) {
+      const answer = prompt(extra.ask, '');
+      if (answer === null) return;
+      if (cmd === 'open_app') return send(cmd, { app: answer.trim() });
+      if (cmd === 'open_url') return send(cmd, { url: answer.trim(), text: answer.trim() });
+      if (cmd === 'quiet') return askQuiet(answer.trim());
+      return send(cmd, { text: answer });
+    }
+    return send(cmd);
+  };
 });
+
+async function askQuiet(text) {
+  const { data } = await api('/api/quiet', { on: true, text });
+  logEvent(`黑屏安静：${data && data.on ? '开了' : '没开'}（${text || '无字'}）`, !(data && data.on));
+  const st = await api('/api/quiet');
+  if (st && st.data && st.data.on) logEvent('学生现在看不到屏幕了，右下角有举手按钮');
+}
 
 /** 打开「发通知」对话框（局域网这边也能自定义，不再用浏览器自带的 prompt） */
 function openNotice() {
@@ -1076,9 +1358,9 @@ for (let i = 0; i < 3; i++) {
 $('ntCancel').onclick = closeNotice;
 $('ntSend').onclick = sendNotice;
 
-async function send(command) {
-  let args = {};
-  if (command === 'message') {
+async function send(command, override) {
+  let args = override || {};
+  if (command === 'message' && !override) {
     // 局域网这边也要能自定义置顶/全屏/标题/内容/选项
     return openNotice();
   }

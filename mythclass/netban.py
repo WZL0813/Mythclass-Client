@@ -191,6 +191,13 @@ def _allow_rules_script(ips: list[str]) -> list[str]:
         # 控制通道：命根子，只放服务端那几个 IP 的 443
         "New-NetFirewallRule -DisplayName 'Mythclass NetBan - 控制通道' -Group '{g}' "
         "-Direction Outbound -Action Allow -Protocol TCP -RemotePort 443 -RemoteAddress {ips} -Profile Any",
+        # 局域网必须放行 —— 不然教师端直连、局域网控制台、屏幕流
+        # 会被自己的防火墙一起掐掉（表现是页面卡死，只有放开上网才恢复）
+        "New-NetFirewallRule -DisplayName 'Mythclass NetBan - 局域网' -Group '{g}' "
+        "-Direction Outbound -Action Allow -RemoteAddress LocalSubnet -Profile Any",
+        # 局域网那几个端口再点名放行一次（本机回自己也算）
+        "New-NetFirewallRule -DisplayName 'Mythclass NetBan - 局域网端口' -Group '{g}' "
+        "-Direction Outbound -Action Allow -Protocol TCP -LocalPort 26924,26925,26926 -Profile Any",
         # DNS：要能重新解析服务端域名
         "New-NetFirewallRule -DisplayName 'Mythclass NetBan - DNS' -Group '{g}' "
         "-Direction Outbound -Action Allow -Protocol UDP -RemotePort 53 -Profile Any",

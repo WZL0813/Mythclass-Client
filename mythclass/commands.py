@@ -14,6 +14,7 @@ import threading
 import time
 import tkinter as tk
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 from . import config, netban
@@ -343,6 +344,133 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
 
 
 
+def cmd_usage_stats(args: dict) -> tuple[bool, str]:
+    """软件使用时长排行（返回 JSON 文本，两端都解析它）"""
+    import json
+
+    from . import usage as usage_mod
+
+    items = []
+    try:
+        from .db import RecordStore
+
+        items = RecordStore().usage_summary(int(args.get("limit") or 40))
+    except Exception:
+        items = []
+    return True, json.dumps(
+        {"items": items, "current": usage_mod.current_app()}, ensure_ascii=False
+    )
+
+
+def cmd_list_dir(args: dict) -> tuple[bool, str]:
+    """列一个目录（磁盘文件查看用）"""
+    import json
+    from datetime import datetime as _dt
+
+    raw = str(args.get("path") or "").strip() or os.path.expanduser("~")
+    target = Path(raw).expanduser()
+    if not target.exists():
+        return False, f"没有这个路径：{target}"
+    if target.is_file():
+        return False, f"这是个文件，不是目录：{target}"
+
+    items = []
+    try:
+        for entry in os.scandir(target):
+            try:
+                stat = entry.stat()
+                items.append(
+                    {
+                        "name": entry.name,
+                        "dir": entry.is_dir(),
+                        "size": 0 if entry.is_dir() else stat.st_size,
+                        "mtime": _dt.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                    }
+                )
+            except Exception:
+                continue
+    except PermissionError:
+        return False, f"没权限看这个目录：{target}"
+    except Exception as err:
+        return False, f"列目录失败：{type(err).__name__}: {err}"
+
+    items.sort(key=lambda x: (not x["dir"], x["name"].lower()))
+    parent = str(target.parent) if target.parent != target else ""
+    return True, json.dumps(
+        {"path": str(target), "parent": parent, "items": items[:400]}, ensure_ascii=False
+    )
+
+
+def cmd_list_windows(args: dict) -> tuple[bool, str]:
+    """当前开着的窗口（含最小化/最大化/全屏）"""
+    import json
+
+    from . import windows as windows_mod
+
+    return True, json.dumps({"items": windows_mod.list_windows()}, ensure_ascii=False)
+
+
+def cmd_close_window(args: dict) -> tuple[bool, str]:
+    """关掉指定的窗口"""
+    from . import windows as windows_mod
+
+    return windows_mod.close_window(int(args.get("hwnd") or 0))
+
+
+def cmd_quiet(args: dict) -> tuple[bool, str]:
+    """黑屏安静：开 / 关"""
+    from . import quiet as quiet_mod
+
+    on = args.get("on")
+    if on is None:
+        on = True
+    if isinstance(on, str):
+        on = on.lower() not in ("0", "false", "off", "no")
+    if on:
+        return quiet_mod.show(str(args.get("text") or ""))
+    return quiet_mod.hide()
+
+
+def cmd_hand(args: dict) -> tuple[bool, str]:
+    """举手状态（学生自己在黑屏里点，老师也能看/清）"""
+    import json
+
+    from . import quiet as quiet_mod
+
+    on = args.get("on")
+    if on is None:
+        return True, json.dumps(quiet_mod.status(), ensure_ascii=False)
+    if isinstance(on, str):
+        on = on.lower() not in ("0", "false", "off", "no")
+    quiet_mod.raise_hand(bool(on))
+    return True, json.dumps(quiet_mod.status(), ensure_ascii=False)
+
+
+def cmd_screenshot(args: dict) -> tuple[bool, str]:
+    """截一张图存到本机（全分辨率 PNG，尽量清晰），返回存到哪儿了。
+
+    局域网那个页面点「截图」走的是 /api/screenshot（直接回图，能看能存）；
+    这个命令是给「截图存到机器上」用的。
+    """
+    try:
+        import mss
+        from PIL import Image
+
+        folder = Path(os.path.expanduser("~")) / "Pictures" / "Mythclass"
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = folder / f"截图-{stamp}.png"
+
+        with mss.mss() as grabber:
+            monitor = grabber.monitors[1] if len(grabber.monitors) > 1 else grabber.monitors[0]
+            shot = grabber.grab(monitor)
+            image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+        image.save(dest, format="PNG")
+        return True, f"截好了：{dest}（{image.width}x{image.height}）"
+    except Exception as err:
+        return False, f"截图失败：{type(err).__name__}: {err}"
+
+
 def cmd_open_url(args: dict) -> tuple[bool, str]:
     url = str(args.get("url") or "").strip()
     if not url:
@@ -436,6 +564,13 @@ REGISTRY = {
     "file_distribute": cmd_file_distribute,
     "screen_broadcast": cmd_screen_broadcast,
     "net_ban": cmd_net_ban,
+    "screenshot": cmd_screenshot,
+    "usage_stats": cmd_usage_stats,
+    "list_dir": cmd_list_dir,
+    "list_windows": cmd_list_windows,
+    "close_window": cmd_close_window,
+    "quiet": cmd_quiet,
+    "hand": cmd_hand,
 }
 
 

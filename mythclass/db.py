@@ -24,6 +24,14 @@ CREATE TABLE IF NOT EXISTS file_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_fl_time ON file_logs (timestamp DESC);
 
+-- 软件使用时长：哪个程序、用了多久、最后一次看到
+CREATE TABLE IF NOT EXISTS app_usage (
+  app        TEXT PRIMARY KEY,
+  seconds    REAL NOT NULL DEFAULT 0,
+  last_title TEXT,
+  last_seen  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS audio_logs (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   timestamp    TEXT NOT NULL,
@@ -110,6 +118,49 @@ class RecordStore:
         with self._lock:
             self._conn.execute(f"UPDATE {table} SET uploaded = 1 WHERE id IN ({marks})", ids)
             self._conn.commit()
+
+    def add_app_usage(self, app: str, seconds: float, title: str = "") -> None:
+        """累加某个程序的用时（usage.py 每 5 秒调一次）"""
+        name = (app or "").strip()
+        if not name or seconds <= 0:
+            return
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO app_usage (app, seconds, last_title, last_seen) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(app) DO UPDATE SET "
+                    "seconds = seconds + excluded.seconds, "
+                    "last_title = excluded.last_title, "
+                    "last_seen = excluded.last_seen",
+                    (name, float(seconds), (title or "")[:200], now_str()),
+                )
+                self._conn.commit()
+        except Exception as err:  # 写不进去不该影响主流程，但得留个痕迹
+            self._usage_error = f"{type(err).__name__}: {err}"
+
+    def usage_summary(self, limit: int = 40) -> list[dict]:
+        """用时排行（长的在前）"""
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT app, seconds, last_title, last_seen FROM app_usage "
+                    "ORDER BY seconds DESC LIMIT ?",
+                    (max(1, min(int(limit), 200)),),
+                ).fetchall()
+            return [
+                {"app": r[0], "seconds": round(float(r[1] or 0), 1), "title": r[2], "lastSeen": r[3]}
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def clear_usage(self) -> None:
+        try:
+            with self._lock:
+                self._conn.execute("DELETE FROM app_usage")
+                self._conn.commit()
+        except Exception:
+            pass
 
     def recent_file_logs(self, limit: int = 50) -> list[dict]:
         with self._lock:

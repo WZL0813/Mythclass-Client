@@ -19,6 +19,10 @@ from .api import ServerApi, SocketClient
 from .commands import execute, known_commands
 from .db import RecordStore
 from .monitors import AudioMonitor, FileMonitor, ScreenStreamer
+from . import usage
+from . import quiet, windows
+from .usage import UsageMonitor
+from .commands import cmd_list_dir
 from . import bindings, crash, lanport, lanweb, netban, trust
 from .tray import Tray, make_icon_image
 
@@ -48,6 +52,8 @@ class MythclassClient:
 
         self.file_monitor: FileMonitor | None = None
         self.audio_monitor: AudioMonitor | None = None
+        self.usage_monitor: UsageMonitor | None = None
+        self.last_audio: list = []
         self.screen = ScreenStreamer(self.cfg.get("screenFps", 12), self.cfg.get("screenQuality", 60))
 
         self.tray = Tray(self)
@@ -68,6 +74,53 @@ class MythclassClient:
         self.web.frame_error = lambda: self.lan_frame_error
         # 局域网页面要看的：文件修改记录、设置（只读）
         self.web.file_logs = lambda limit=200: self.store.recent_file_logs(limit)
+        self.web.screenshot = self._lan_screenshot
+
+        # 局域网页面的其它数据源
+        self.web.audio_items = lambda: self.last_audio
+        self.web.usage_items = lambda: self.store.usage_summary(60)
+        self.web.window_items = windows.list_windows
+        self.web.quiet_state = quiet.status
+
+        def _close_window(hwnd: int):
+            return windows.close_window(hwnd)
+
+        def _dir_listing(where: str):
+            import json as _json
+
+            good, out = cmd_list_dir({"path": where})
+            if not good:
+                return None
+            try:
+                return _json.loads(out)
+            except Exception:
+                return None
+
+        def _read_file(where: str):
+            try:
+                p = Path(str(where)).expanduser()
+                if not p.is_file() or p.stat().st_size > 64 * 1024 * 1024:
+                    return None
+                return (p.name, p.read_bytes())
+            except Exception:
+                return None
+
+        def _set_quiet(on: bool, text: str = ""):
+            if on:
+                quiet.show(text, on_report=self._report_hand)
+            else:
+                quiet.hide()
+            return quiet.status()
+
+        def _set_hand(on: bool):
+            quiet.raise_hand(on, on_report=self._report_hand)
+            return quiet.status()
+
+        self.web.close_window = _close_window
+        self.web.dir_listing = _dir_listing
+        self.web.read_file = _read_file
+        self.web.set_quiet = _set_quiet
+        self.web.set_hand = _set_hand
         self.web.settings_view = lambda: {
             "name": self.cfg.get("clientName") or "教室一体机",
             "clientUid": self.client_uid,
@@ -244,6 +297,30 @@ class MythclassClient:
             "unlockHint": "锁屏时 Windows 不给抓屏，点上面的「解锁」再试",
         }
 
+    def _lan_screenshot(self) -> bytes | None:
+        """全分辨率 PNG（局域网页面点截图用，尽量清晰）"""
+        if self.session_locked():
+            self.lan_frame_error = "这台机器锁屏了，锁屏时 Windows 不给抓屏"
+            return None
+        try:
+            import io
+
+            import mss
+            from PIL import Image
+
+            with mss.mss() as grabber:
+                monitor = grabber.monitors[1] if len(grabber.monitors) > 1 else grabber.monitors[0]
+                shot = grabber.grab(monitor)
+                image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG", optimize=False)
+            self.lan_frame_error = ""
+            return buffer.getvalue()
+        except Exception as err:
+            self.lan_frame_error = f"{type(err).__name__}: {err}"
+            self.log(f"局域网截图失败：{self.lan_frame_error}", logging.WARNING)
+            return None
+
     @staticmethod
     def session_locked() -> bool:
         """这台机器现在是不是锁屏状态。
@@ -263,6 +340,21 @@ class MythclassClient:
             return True
         except Exception:
             return False
+
+    def _report_hand(self, what: str) -> None:
+        """学生在黑屏里举手 / 放下，报给老师"""
+        try:
+            self.log(f"黑屏安静：{what}")
+            if self.api:
+                self.api.command_result("", "hand", True, what)
+        except Exception:
+            pass
+
+    def _on_audio_info(self, items: list) -> None:
+        """音频会话（哪些程序在出声）—— 留一份给局域网页面看，同时照旧上报服务端"""
+        self.last_audio = list(items or [])
+        if self.socket:
+            self.socket.emit("audio_info", {"items": items})
 
     def _lan_frame(self) -> bytes | None:
         """本地网页要一帧画面。
@@ -562,8 +654,13 @@ class MythclassClient:
         # 监控起来
         self.file_monitor = FileMonitor(self.store, dirs=config.watch_dirs(self.cfg))
         self.file_monitor.start()
-        self.audio_monitor = AudioMonitor(self.store, on_info=lambda items: self.socket and self.socket.emit("audio_info", {"items": items}))
+        self.audio_monitor = AudioMonitor(self.store, on_info=self._on_audio_info)
         self.audio_monitor.start()
+
+        # 软件使用时长：每 5 秒看一眼前台
+        self.usage_monitor = UsageMonitor(self.store)
+        usage.set_monitor(self.usage_monitor)
+        self.usage_monitor.start()
 
         # 保护起来
         if self.cfg.get("protectProcess"):
