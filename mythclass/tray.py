@@ -116,6 +116,21 @@ class Tray:
 
         threading.Thread(target=run, daemon=True).start()
 
+    def _reconnect(self) -> None:
+        """手动重连：不用等自动退避"""
+        app = self.app
+        try:
+            if app.socket is not None:
+                app.socket.force_reconnect()
+            msg = "正在重新连接…"
+            if getattr(self, "icon", None) is not None:
+                self.icon.notify(msg, __product__)
+        except Exception as err:
+            try:
+                messagebox.showerror(__product__, f"重连失败：{err}")
+            except Exception:
+                pass
+
     def _show_about(self) -> None:
         ui.open_about_async(self.app.cfg, self.app.client_uid, self._show_settings)
 
@@ -150,6 +165,7 @@ class Tray:
             MenuItem("关于", lambda: self._show_about(), default=True),
             MenuItem("设置", lambda: self._show_settings()),
             MenuItem("状态", lambda: self._show_status()),
+        MenuItem("重新连接", lambda: self._reconnect()),
             Menu.SEPARATOR,
             MenuItem("退出（要密码）", lambda: self._confirm_exit()),
         )

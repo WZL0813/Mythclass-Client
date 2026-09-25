@@ -208,6 +208,8 @@ class SocketClient:
 
         self._ws: websocket.WebSocket | None = None
         self._stop = threading.Event()
+        # 手动重连用：叫醒退避等待，不用干等最多 60 秒
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
         self._outbox: list[str] = []
         self._lock = threading.Lock()
@@ -221,6 +223,22 @@ class SocketClient:
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="mythclass-socket", daemon=True)
         self._thread.start()
+
+    def force_reconnect(self) -> None:
+        """手动重连：掐掉当前连接、叫醒退避等待，立刻重来一次。
+
+        老师那边网络换了、或者只是想马上重连，不用干等退避，
+        也不用重启客户端。
+        """
+        self.fail_count = 0
+        self.last_error = ""
+        self._wake.set()
+        try:
+            # 属性名是 _ws（写成 ws 会被下面的 except 吞掉，静默失效）
+            if self._ws is not None:
+                self._ws.close()
+        except Exception:
+            pass
 
     def stop(self) -> None:
         self._stop.set()
@@ -263,9 +281,14 @@ class SocketClient:
                 break
             if self._stop.is_set():
                 break
-            # 断线重连：慢慢退避，最多 60 秒
-            self._stop.wait(backoff)
-            backoff = min(backoff * 2, 60)
+            # 断线重连：慢慢退避，最多 60 秒。
+            # 用 _wake 而不是 _stop，这样「手动重连」能立刻把它叫醒
+            self._wake.wait(backoff)
+            if self._wake.is_set():
+                self._wake.clear()
+                backoff = 2  # 手动重连：退避从头开始，别又等一分钟
+            else:
+                backoff = min(backoff * 2, 60)
 
     def _connect_once(self) -> None:
         sslopt = {"cert_reqs": ssl.CERT_REQUIRED}
