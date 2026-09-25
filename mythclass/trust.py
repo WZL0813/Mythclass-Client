@@ -86,6 +86,32 @@ def check(ip: str, key: str) -> bool:
     return secrets.compare_digest(saved, key.strip())
 
 
+def own_key() -> str:
+    """这台机器自己的一张固定密钥。
+
+    老师那边弹「建议用它自己的网页」时，就把这张拼进链接，
+    点开就自动对上暗号，不用手输、也不用等连满三次。
+
+    存在 trust 文件里（键名 _self），这样 check_any() 也能认它。
+    """
+    data = _load()
+    entry = data.get("_self") or {}
+    key = str(entry.get("key") or "")
+    if key:
+        return key
+
+    key = secrets.token_hex(16)
+    data["_self"] = {
+        "count": 0,
+        "key": key,
+        "teacher": "本机",
+        "first": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "last": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    _save(data)
+    return key
+
+
 def check_any(key: str) -> bool:
     """这张密钥是不是任何一台被信任的机器发的
 

@@ -86,7 +86,10 @@ class MythclassClient:
                 try:
                     api = ServerApi(url)
                     info = api.register(
-                        self.client_uid, self.cfg.get("clientName") or "教室一体机", identity.local_ips()
+                        self.client_uid,
+                        self.cfg.get("clientName") or "教室一体机",
+                        identity.local_ips(),
+                        trust.own_key(),
                     )
                     self.refresh_bindings()
                     if abs(api.clock_skew) > 120:
@@ -398,7 +401,7 @@ class MythclassClient:
                     if audio and self.api.upload_audio(audio):
                         self.store.mark_uploaded("audio_logs", [item["id"] for item in audio])
 
-                    self.api.heartbeat(identity.local_ips())
+                    self.api.heartbeat(identity.local_ips(), trust.own_key())
             except Exception as err:
                 self.log(f"上报出问题了：{err}", logging.WARNING)
 

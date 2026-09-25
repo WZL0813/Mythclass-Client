@@ -110,8 +110,34 @@ class LanWeb:
                     self._json(500, {"error": "INTERNAL", "message": str(err)})
 
             def _do_get(self):
-                path = self.path.split("?")[0]
+                raw_path = self.path
+                path = raw_path.split("?")[0]
+                query = raw_path.split("?", 1)[1] if "?" in raw_path else ""
                 outer.hits += 1
+
+                # 链接里带密钥就直接对上暗号：老师点一下就能用，
+                # 不用手输、也少一步（?key=xxxx）
+                if "key=" in query:
+                    from urllib.parse import parse_qs
+
+                    given = (parse_qs(query).get("key") or [""])[0].strip()
+                    if outer.trust.check_any(given):
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/html; charset=utf-8")
+                        self.send_header(
+                            "Set-Cookie", f"{COOKIE}={given}; Path=/; SameSite=Lax"
+                        )
+                        body = PAGE.encode("utf-8")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.send_header("Cache-Control", "no-store")
+                        self.end_headers()
+                        try:
+                            self.wfile.write(body)
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass
+                        outer.log(f"本地网页：{self._ip()} 用链接里的密钥进来了。")
+                        return
+                    outer.log(f"本地网页：{self._ip()} 链接里的密钥不对。")
 
                 if path in ("/", "/index.html"):
                     self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
@@ -416,6 +442,12 @@ $('stopBtn').onclick = stopWatch;
 document.querySelectorAll('[data-cmd]').forEach(b => { b.onclick = () => send(b.dataset.cmd); });
 
 (async () => {
+  // 链接里带 key（老师从教师端点过来就是这种）：自动连上，不用手输
+  const fromUrl = new URLSearchParams(location.search).get('key');
+  if (fromUrl) {
+    localStorage.setItem('mythkey', fromUrl);
+    history.replaceState(null, '', location.pathname + location.search);
+  }
   if (key()) {
     const { status } = await api('/api/info');
     if (status === 200) show(true);

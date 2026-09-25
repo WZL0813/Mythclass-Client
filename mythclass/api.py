@@ -74,7 +74,10 @@ class ServerApi:
             head["Authorization"] = f"Bearer {self.token}"
         return head
 
-    def register(self, client_uid: str, name: str, local_ips: list[str] | None = None) -> dict:
+    def register(
+        self, client_uid: str, name: str, local_ips: list[str] | None = None,
+        lan_key: str = "",
+    ) -> dict:
         resp = self.session.post(
             f"{self.base}/api/client/register",
             json={
@@ -83,6 +86,8 @@ class ServerApi:
                 "os": identity.os_description(),
                 "version": __version__,
                 "localIps": local_ips or [],
+                # 本机局域网密钥：教师端拼带密钥的直连链接要用
+                "lanKey": lan_key or "",
             },
             headers=self._headers(),
             timeout=DEFAULT_TIMEOUT,
@@ -119,11 +124,11 @@ class ServerApi:
         except requests.RequestException:
             return None
 
-    def heartbeat(self, local_ips: list[str] | None = None) -> bool:
+    def heartbeat(self, local_ips: list[str] | None = None, lan_key: str = "") -> bool:
         try:
             resp = self.session.post(
                 f"{self.base}/api/client/heartbeat",
-                json={"localIps": local_ips or []},
+                json={"localIps": local_ips or [], "lanKey": lan_key},
                 headers=self._headers(),
                 timeout=DEFAULT_TIMEOUT,
             )
