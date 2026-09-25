@@ -30,7 +30,7 @@ namespace MythclassSetup
         // 对话框和「程序和功能」里给用户看的全名
         public const string DisplayName = "Mythclass 若思班级一体机管理系统";
         public const string ExeName = "MythclassClient.exe";
-        public const string Version = "2.0.7";
+        public const string Version = "2.0.8";
         public const string DefaultDir = @"C:\Program Files (x86)\Mythclass";
         public const string RegPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MythclassClient";
         public const string PayloadResource = "payload.zip";
@@ -39,6 +39,7 @@ namespace MythclassSetup
         static bool optSilent = false;
         static bool optNoElevate = false;
         static bool optNoLaunch = false;
+        static string uninstallPassword = null;
 
         [STAThread]
         static int Main(string[] args)
@@ -50,6 +51,10 @@ namespace MythclassSetup
                     case "--target": if (i + 1 < args.Length) optTarget = args[++i]; break;
                     case "--silent": optSilent = true; break;
                     case "--noelevate": optNoElevate = true; break;
+                    // 装的时候就设好卸载密码（防止学生自己卸）
+                    case "--uninstall-password":
+                        if (i + 1 < args.Length) uninstallPassword = args[++i];
+                        break;
                     case "--nolaunch": optNoLaunch = true; break;
                 }
             }

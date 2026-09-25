@@ -40,6 +40,7 @@ namespace MythclassSetup
 
         static string optTarget = null;
         static string optPassword = null;
+        static string optUsername = null;
         static bool optSilent = false;
         static bool optNoElevate = false;
         static bool optKeepData = false;
@@ -61,6 +62,7 @@ namespace MythclassSetup
                     case "--silent": optSilent = true; break;
                     case "--target": if (i + 1 < args.Length) optTarget = args[++i]; break;
                     case "--password": if (i + 1 < args.Length) optPassword = args[++i]; break;
+                    case "--username": if (i + 1 < args.Length) optUsername = args[++i]; break;
                     case "--noelevate": optNoElevate = true; break;
                     case "--keep-data": optKeepData = true; break;
                 }
@@ -101,26 +103,96 @@ namespace MythclassSetup
                 if (answer != DialogResult.OK) return 0;
             }
 
-            // 二、有卸载密码就要密码（防止学生自己卸）
-            var stored = LoadPasswordHash();
-            if (!string.IsNullOrEmpty(stored))
+            // 二、要 Mythclass 密码（防止学生自己卸）
+            //
+            // 三条路任一条通过就行：
+            //   · 本机 Mythclass 管理密码（config.json 里那份，本地就能比）
+            //   · 安装时设的卸载密码
+            //   · 教师账号密码（发服务端比，而且要求绑定过这台机器）
+            if (!optSilent)
             {
-                var given = optPassword;
-                if (string.IsNullOrEmpty(given))
+                string given = optPassword;
+                string account = optUsername ?? "";
+                var tries = 0;
+                var hint = "输入 Mythclass 的密码。\r\n\r\n" +
+                           "本机的管理密码可以直接用；也可以填教师账号 + 密码。";
+
+                while (true)
                 {
-                    if (optSilent) return 3;
-                    using (var dialog = new PasswordDialog())
+                    if (string.IsNullOrEmpty(given))
                     {
-                        if (dialog.ShowDialog() != DialogResult.OK) return 0;
-                        given = dialog.Password;
+                        using (var dialog = new MythPasswordDialog(hint))
+                        {
+                            if (dialog.ShowDialog() != DialogResult.OK) return 0;
+                            given = dialog.Password;
+                            if (!string.IsNullOrEmpty(dialog.Username)) account = dialog.Username;
+                        }
                     }
+
+                    var local = MythclassPassword.VerifyLocal(given);
+                    if (local != MythclassPassword.Source.None)
+                    {
+                        Program.TryLog("卸载：密码通过（" + local + "）");
+                        break;
+                    }
+
+                    // 这台机器上没有任何密码材料（装了但从没跑过客户端，
+                    // 也没设过卸载密码）—— 那就退回「必须是提权进程」这条底线，
+                    // 免得把人锁死在外面。
+                    string cfgUid, cfgServer;
+                    MythclassPassword.ReadIdentity(out cfgUid, out cfgServer);
+                    if (string.IsNullOrEmpty(cfgUid) &&
+                        !File.Exists(Path.Combine(@"C:\ProgramData\Mythclass", "uninstall.json")))
+                    {
+                        Program.TryLog("卸载：机器上没有任何密码材料，退回提权检查");
+                        if (IsAdmin()) break;
+                        MessageBox.Show(
+                            "这台机器还没跑过客户端，也没设过卸载密码。\r\n\r\n" +
+                            "请用管理员身份运行本程序再卸载。",
+                            Program.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return 4;
+                    }
+
+                    string uid, server;
+                    MythclassPassword.ReadIdentity(out uid, out server);
+                    string message;
+                    var online = MythclassPassword.VerifyOnline(server, uid, account, given, out message);
+                    if (online)
+                    {
+                        Program.TryLog("卸载：教师账号验证通过（" + account + "）");
+                        break;
+                    }
+
+                    tries++;
+                    if (tries >= 3)
+                    {
+                        MessageBox.Show("试了三次都不对，卸载取消。\r\n\r\n" + message,
+                            Program.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return 3;
+                    }
+                    hint = "密码不对（" + message + "）。再试一次。\r\n\r\n" + hint;
+                    given = null;
                 }
-                if (!VerifyPassword(stored, given))
+            }
+            else
+            {
+                // 静默模式：**必须**给密码。
+                // 不给就直接拒绝 —— 否则学生拿 --silent 一跑就绕过了密码。
+                if (string.IsNullOrEmpty(optPassword))
                 {
-                    if (!optSilent)
-                        MessageBox.Show("密码不对，卸载取消。", Program.DisplayName,
-                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    Program.TryLog("卸载：静默模式没给 --password，拒绝");
                     return 3;
+                }
+                if (MythclassPassword.VerifyLocal(optPassword) == MythclassPassword.Source.None)
+                {
+                    string uid, server;
+                    MythclassPassword.ReadIdentity(out uid, out server);
+                    string message;
+                    if (!MythclassPassword.VerifyOnline(server, uid, optUsername, optPassword, out message))
+                    {
+                        Program.TryLog("卸载：静默模式密码没过（" + message + "）");
+                        return 3;
+                    }
                 }
             }
 
@@ -326,7 +398,9 @@ namespace MythclassSetup
 
         static byte[] Pbkdf2(string password, byte[] salt, int iterations)
         {
-            using (var kdf = new Rfc2898DeriveBytes(password, salt, iterations))
+            // 必须指定 SHA256：不指定的话 Rfc2898DeriveBytes 默认用 SHA1，
+            // 和 MythclassPassword 那边（SHA256）对不上，密码永远验不过
+            using (var kdf = new Rfc2898DeriveBytes(password, salt, iterations, HashAlgorithmName.SHA256))
             {
                 return kdf.GetBytes(32);
             }
@@ -351,16 +425,18 @@ namespace MythclassSetup
         }
     }
 
-    /// <summary>要卸载密码时弹的那个小框</summary>
-    class PasswordDialog : Form
+    /// <summary>要 Mythclass 密码时弹的那个小框</summary>
+    class MythPasswordDialog : Form
     {
         public string Password { get; private set; }
-        readonly TextBox box;
+        public string Username { get; private set; }
+        readonly TextBox passwordBox;
+        readonly TextBox userBox;
 
-        public PasswordDialog()
+        public MythPasswordDialog(string hint)
         {
-            Text = "需要管理员密码";
-            ClientSize = new Size(400, 190);
+            Text = "卸载需要 Mythclass 密码";
+            ClientSize = new Size(470, 268);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterScreen;
             MaximizeBox = false;
@@ -369,39 +445,58 @@ namespace MythclassSetup
             ForeColor = Color.FromArgb(232, 239, 230);
             Font = new Font("Microsoft YaHei UI", 9f);
 
-            Controls.Add(new Label
+            var tip = new Label
             {
-                Text = "卸载这台机器需要管理员密码。",
-                ForeColor = Color.FromArgb(232, 239, 230),
+                Text = hint,
+                ForeColor = Color.FromArgb(201, 214, 198),
                 BackColor = Color.Transparent,
-                Location = new Point(20, 18),
-                AutoSize = true
-            });
+                Location = new Point(20, 16),
+                Size = new Size(430, 66)
+            };
+            Controls.Add(tip);
+
             Controls.Add(new Label
             {
-                Text = "被学生看到的话，这台机器就管不住了。",
+                Text = "教师账号（只有要用服务端验证时才填）",
                 ForeColor = Color.FromArgb(143, 168, 142),
                 BackColor = Color.Transparent,
-                Location = new Point(20, 42),
+                Location = new Point(20, 88),
                 AutoSize = true
             });
-
-            box = new TextBox
+            userBox = new TextBox
             {
-                UseSystemPasswordChar = true,
-                Location = new Point(22, 74),
-                Size = new Size(356, 26),
+                Location = new Point(22, 110),
+                Size = new Size(426, 26),
                 BackColor = Color.FromArgb(20, 27, 23),
                 ForeColor = Color.FromArgb(232, 239, 230),
                 BorderStyle = BorderStyle.FixedSingle
             };
-            Controls.Add(box);
+            Controls.Add(userBox);
+
+            Controls.Add(new Label
+            {
+                Text = "Mythclass 密码",
+                ForeColor = Color.FromArgb(143, 168, 142),
+                BackColor = Color.Transparent,
+                Location = new Point(20, 146),
+                AutoSize = true
+            });
+            passwordBox = new TextBox
+            {
+                UseSystemPasswordChar = true,
+                Location = new Point(22, 168),
+                Size = new Size(426, 26),
+                BackColor = Color.FromArgb(20, 27, 23),
+                ForeColor = Color.FromArgb(232, 239, 230),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            Controls.Add(passwordBox);
 
             var ok = new Button
             {
                 Text = "确定",
                 DialogResult = DialogResult.OK,
-                Location = new Point(212, 124),
+                Location = new Point(282, 214),
                 Size = new Size(80, 32),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(63, 107, 82),
@@ -414,7 +509,7 @@ namespace MythclassSetup
             {
                 Text = "取消",
                 DialogResult = DialogResult.Cancel,
-                Location = new Point(300, 124),
+                Location = new Point(370, 214),
                 Size = new Size(80, 32),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(20, 27, 23),
@@ -425,11 +520,17 @@ namespace MythclassSetup
 
             AcceptButton = ok;
             CancelButton = cancel;
-            box.KeyDown += (s, e) =>
+            passwordBox.KeyDown += (s, e) =>
             {
-                if (e.KeyCode == Keys.Enter) { Password = box.Text; DialogResult = DialogResult.OK; }
+                if (e.KeyCode == Keys.Enter) { Take(); DialogResult = DialogResult.OK; }
             };
-            ok.Click += (s, e) => { Password = box.Text; };
+            ok.Click += (s, e) => Take();
+        }
+
+        void Take()
+        {
+            Password = passwordBox.Text;
+            Username = userBox.Text.Trim();
         }
     }
 

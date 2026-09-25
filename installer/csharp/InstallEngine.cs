@@ -216,7 +216,7 @@ namespace MythclassSetup
                     key.SetValue("DisplayIcon", Path.Combine(targetDir, Program.ExeName));
                     var uninstaller = Path.Combine(targetDir, "MythclassUninstall.exe");
                     key.SetValue("UninstallString", "\"" + uninstaller + "\"");
-                    key.SetValue("QuietUninstallString", "\"" + uninstaller + "\" --silent");
+
                     key.SetValue("NoModify", 1, RegistryValueKind.DWord);
                     key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
                     key.SetValue("EstimatedSize", 140000, RegistryValueKind.DWord);

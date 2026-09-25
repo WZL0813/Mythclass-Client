@@ -72,6 +72,9 @@ Write-Host ("  {0:N1} MB" -f ((Get-Item $zipPath).Length / 1MB))
 # 它自己带 requireAdministrator 清单：双击就弹 UAC，
 # 标准用户会被要求输入管理员密码。
 Head '编译卸载器'
+# 先确保 out 目录在：删掉 out 之后再编译，csc 写 Win32 资源会报
+# 「系统找不到指定的路径」(CS1567)
+New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 $csc = @(
   "$env:SystemRoot\Microsoft.NET.Framework64\v4.0.30319\csc.exe",
   "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
