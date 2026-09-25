@@ -541,6 +541,15 @@ async function loadInfo() {
   const { data } = await api('/api/info');
   if (!data) return;
   $('sub').textContent = '直连这台机器 · 不经过服务器 · v' + (data.version || '?');
+  // 锁屏了就说清楚 —— 画面会是黑的/抓不到，别让老师以为坏了
+  if (data.locked) {
+    $('hint').classList.remove('hidden');
+    $('hint').textContent = '这台机器锁屏了。锁屏时 Windows 不给抓屏，点上面的「解锁」就能看了。';
+  } else if ($('hint').dataset.locked === '1') {
+    $('hint').classList.add('hidden');
+    $('hint').dataset.locked = '';
+  }
+  $('hint').dataset.locked = data.locked ? '1' : '';
   $('ipPill').textContent = '我的地址 ' + (data.clientIp || '?');
   const rows = [
     ['名称', data.name || '—'],
@@ -655,7 +664,10 @@ $('fullBtn').onclick = () => {
   }
   if (key()) {
     const { status } = await api('/api/info');
-    if (status === 200) showConsole();
+    if (status === 200) {
+      showConsole();
+      startWatch();   // 连上就自动开始看，不用再点一下
+    }
   }
   loadInfo();
   renderEvents();

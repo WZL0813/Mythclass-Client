@@ -226,7 +226,30 @@ class MythclassClient:
             "teachers": data.get("teachers") or [],
             "localIps": identity.local_ips(),
             "screenAlive": self.screen.alive(),
+            # 锁屏时抓不到画面，页面上要说清楚（不然老师以为坏了）
+            "locked": self.session_locked(),
+            "unlockHint": "锁屏时 Windows 不给抓屏，点上面的「解锁」再试",
         }
+
+    @staticmethod
+    def session_locked() -> bool:
+        """这台机器现在是不是锁屏状态。
+
+        锁屏时 Windows 会把输入桌面切走，抓屏会失败（或者抓到全黑）。
+        判断办法：试着打开输入桌面，打不开就是锁了。
+        """
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            # 0x0100 = DESKTOP_READOBJECTS
+            handle = user32.OpenInputDesktop(0, False, 0x0100)
+            if handle:
+                user32.CloseDesktop(handle)
+                return False
+            return True
+        except Exception:
+            return False
 
     def _lan_frame(self) -> bytes | None:
         """本地网页要一帧画面。
@@ -234,6 +257,10 @@ class MythclassClient:
         自己抓、自己记错误 —— 原来走 monitors.grab_thumbnail()，
         它把异常吞了只返回 None，页面就只能黑着，谁也查不出为什么。
         """
+        if self.session_locked():
+            self.lan_frame_error = "这台机器锁屏了，锁屏时 Windows 不给抓屏"
+            return None
+
         try:
             import io
 
