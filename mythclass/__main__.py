@@ -43,6 +43,8 @@ class MythclassClient:
         self._notified_connected = False
         self._ever_connected = False
         self._last_connect_notify = 0.0
+        # 本地网页抓帧失败的原因（显示在页面上，省得黑屏查不出问题）
+        self.lan_frame_error = ""
 
         self.file_monitor: FileMonitor | None = None
         self.audio_monitor: AudioMonitor | None = None
@@ -63,6 +65,7 @@ class MythclassClient:
             log=lambda m: self.log(m),
             port=int(self.cfg.get("lanWebPort") or lanweb.DEFAULT_PORT),
         )
+        self.web.frame_error = lambda: self.lan_frame_error
         self.lan = lanport.LanPort(
             trust=trust,
             on_command=self._run_command_sync,
@@ -226,29 +229,32 @@ class MythclassClient:
         }
 
     def _lan_frame(self) -> bytes | None:
-        """本地网页要一帧画面。按需抓，抓完就完（不依赖屏幕流开着）
+        """本地网页要一帧画面。
 
-        注意：monitors.grab_thumbnail() 返回的是 base64 data URL 字符串，
-        不是 bytes、也不是 PIL Image —— 原来只认后两种，所以永远返回 None，
-        本地网页就一直显示「抓不到画面」。
+        自己抓、自己记错误 —— 原来走 monitors.grab_thumbnail()，
+        它把异常吞了只返回 None，页面就只能黑着，谁也查不出为什么。
         """
         try:
-            import base64
+            import io
 
-            from . import monitors
+            import mss
+            from PIL import Image
 
-            shot = monitors.grab_thumbnail(max_width=1280, quality=60)
-            if not shot:
-                return None
-            if isinstance(shot, bytes):
-                return shot
-            if isinstance(shot, str):
-                if "base64," in shot:
-                    return base64.b64decode(shot.split("base64,", 1)[1])
-                return base64.b64decode(shot, validate=False)
-            return None
+            with mss.mss() as grabber:
+                monitor = grabber.monitors[1] if len(grabber.monitors) > 1 else grabber.monitors[0]
+                shot = grabber.grab(monitor)
+                image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+                if image.width > 1280:
+                    image = image.resize((1280, max(1, int(image.height * 1280 / image.width))))
+                buffer = io.BytesIO()
+                image.save(buffer, format="JPEG", quality=60)
+                self.lan_frame_error = ""
+                return buffer.getvalue()
         except Exception as err:
-            self.log(f"本地网页抓画面失败：{type(err).__name__}: {err}", logging.WARNING)
+            # 常见原因：这台机器锁屏了（Windows 不给抓）、远程桌面会话、
+            # 或者客户端跑在没有桌面的会话里
+            self.lan_frame_error = f"{type(err).__name__}: {err}"
+            self.log(f"本地网页抓画面失败：{self.lan_frame_error}", logging.WARNING)
             return None
 
     def _note_teacher(self, sender: dict) -> None:

@@ -40,6 +40,8 @@ class LanWeb:
         self.on_command = on_command
         self.on_info = on_info
         self.on_frame = on_frame
+        # 抓帧失败时问它要原因（显示给用户，别只回「抓不到画面」）
+        self.frame_error = None
         self.log = log
         self.port = int(port)
         self.running = False
@@ -158,7 +160,12 @@ class LanWeb:
                         return
                     data = outer.on_frame()
                     if not data:
-                        self._json(503, {"error": "NO_FRAME", "message": "抓不到画面"})
+                        why = ""
+                        getter = getattr(outer, "frame_error", None)
+                        if callable(getter):
+                            why = getter() or ""
+                        msg = "抓不到屏幕" + (f"（{why}）" if why else "")
+                        self._json(503, {"error": "NO_FRAME", "message": msg})
                         return
                     self._send(200, data, "image/jpeg")
                     return
@@ -598,7 +605,21 @@ function tick() {
     $('size').textContent = img.naturalWidth + '×' + img.naturalHeight;
     $('hint').classList.add('hidden');
   };
-  img.onerror = () => { $('fps').textContent = '抓不到画面'; };
+  img.onerror = async () => {
+    $('fps').textContent = '抓不到画面';
+    if ($('hint').dataset.why) return;
+    try {
+      const res = await fetch('/frame', { headers: { 'X-Mythclass-Key': key() } });
+      const data = await res.json();
+      const why = (data && data.message) || '抓不到屏幕';
+      $('hint').dataset.why = '1';
+      $('hint').classList.remove('hidden');
+      $('hint').textContent = why + '　（这台机器锁屏时抓不到画面，先解锁再试）';
+      logEvent(why, true);
+    } catch (_) {
+      /* 问不出来就算了 */
+    }
+  };
   img.src = '/frame?t=' + Date.now();
 }
 function startWatch() {
