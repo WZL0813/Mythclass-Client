@@ -67,19 +67,19 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
   $payload, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 Write-Host ("  {0:N1} MB" -f ((Get-Item $zipPath).Length / 1MB))
 
-# ---------------------------------------------------------------- 编译
-Head '用 csc 编译安装器'
+# ---------------------------------------------------------------- 编译卸载器
+# 先编它，因为安装器要把它作为资源内嵌进去。
+# 它自己带 requireAdministrator 清单：双击就弹 UAC，
+# 标准用户会被要求输入管理员密码。
+Head '编译卸载器'
 $csc = @(
-  "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
-  "$env:SystemRoot\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+  "$env:SystemRoot\Microsoft.NET.Framework64\v4.0.30319\csc.exe",
+  "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $csc) { throw '找不到 csc.exe（.NET Framework 4 应该有）' }
-Write-Host "  $csc"
+if (-not $csc) { throw '找不到 csc.exe' }
 
-New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
-$exeName = "MythclassSetup-$version.exe"
-$target = Join-Path $OutDir $exeName
-Remove-Item $target -Force -ErrorAction SilentlyContinue
+$uninstaller = Join-Path $OutDir 'MythclassUninstall.exe'
+Remove-Item $uninstaller -Force -ErrorAction SilentlyContinue
 
 $refs = @(
   "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\System.Windows.Forms.dll",
@@ -89,15 +89,38 @@ $refs = @(
   "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\Microsoft.CSharp.dll"
 ) | Where-Object { Test-Path $_ }
 $refArgs = $refs | ForEach-Object { "/r:`"$_`"" }
-
 $srcs = Get-ChildItem $CsDir -Filter *.cs | ForEach-Object { "`"$($_.FullName)`"" }
 $icon = Join-Path $Root 'build\mythclass.ico'
 
+$unArgs = @(
+  '/nologo', '/target:winexe', '/platform:anycpu', '/optimize+',
+  '/main:MythclassSetup.Uninstaller',
+  # 注意：不给它挂 requireAdministrator 清单。
+  # 那样 Windows 会直接拒绝非提权启动，连 --noelevate 测试都跑不了。
+  # 提权在代码里做（和安装器一样），UAC 提示照旧。
+  "/out:`"$uninstaller`""
+) + $refArgs
+if (Test-Path $icon) { $unArgs += "/win32icon:`"$icon`"" }
+$unArgs += $srcs
+$out = & $csc @unArgs 2>&1
+if ($out) { $out | ForEach-Object { "    $_" } }
+if (-not (Test-Path $uninstaller)) { throw '卸载器编译失败' }
+Write-Host ("  卸载器：{0:N0} KB" -f ((Get-Item $uninstaller).Length / 1KB))
+
+# ---------------------------------------------------------------- 编译安装器
+Head '编译安装器'
+New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
+$exeName = "MythclassSetup-$version.exe"
+$target = Join-Path $OutDir $exeName
+Remove-Item $target -Force -ErrorAction SilentlyContinue
+
 $args = @(
   '/nologo', '/target:winexe', '/platform:anycpu', '/optimize+',
+  # 卸载器里也有 Main，两个入口点必须显式指定
+  '/main:MythclassSetup.Program',
   "/out:`"$target`"",
   "/resource:`"$zipPath`",payload.zip",
-  "/resource:`"$(Join-Path $CsDir 'uninstall.cmd')`",uninstall.cmd"
+  "/resource:`"$uninstaller`",uninstaller.exe"
 ) + $refArgs
 if (Test-Path $icon) { $args += "/win32icon:`"$icon`"" }
 $args += $srcs
@@ -110,7 +133,9 @@ if (-not (Test-Path $target)) { throw "编译失败，没有产物：$target" }
 # ---------------------------------------------------------------- 结果
 Head '结果'
 $size = (Get-Item $target).Length
-Write-Host ("  产物  : $target")
-Write-Host ("  体积  : {0:N1} MB" -f ($size / 1MB))
-Write-Host ("  SHA256: " + (Get-FileHash $target -Algorithm SHA256).Hash)
+Write-Host ("  安装器：$target")
+Write-Host ("  体积  ：{0:N1} MB" -f ($size / 1MB))
+Write-Host ("  卸载器：$uninstaller")
+Write-Host ("  SHA256（安装器）：" + (Get-FileHash $target -Algorithm SHA256).Hash)
+Write-Host ("  SHA256（卸载器）：" + (Get-FileHash $uninstaller -Algorithm SHA256).Hash)
 if (-not $KeepTemp) { Remove-Item $Tmp -Recurse -Force -ErrorAction SilentlyContinue }

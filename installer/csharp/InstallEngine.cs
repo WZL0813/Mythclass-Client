@@ -140,10 +140,18 @@ namespace MythclassSetup
             }
 
             File.WriteAllText(Path.Combine(targetDir, "version.txt"), Program.Version);
-            WriteResource("uninstall.cmd", Path.Combine(targetDir, "uninstall.cmd"));
+            // 卸载器是个 exe（带管理员清单，双击就弹 UAC），
+            // 不再是 cmd —— 老版本留下的 uninstall.cmd 顺手清掉
+            WriteResource("uninstaller.exe", Path.Combine(targetDir, "MythclassUninstall.exe"));
+            TryDelete(Path.Combine(targetDir, "uninstall.cmd"));
 
             if (!File.Exists(Path.Combine(targetDir, Program.ExeName)))
                 throw new FileNotFoundException("铺完文件却没找到 " + Program.ExeName);
+        }
+
+        static void TryDelete(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
         }
 
         static void WriteResource(string name, string destPath)
@@ -206,8 +214,9 @@ namespace MythclassSetup
                     key.SetValue("Publisher", "Ryokuryuneko");
                     key.SetValue("InstallLocation", targetDir);
                     key.SetValue("DisplayIcon", Path.Combine(targetDir, Program.ExeName));
-                    key.SetValue("UninstallString", "\"" + Path.Combine(targetDir, "uninstall.cmd") + "\"");
-                    key.SetValue("QuietUninstallString", "\"" + Path.Combine(targetDir, "uninstall.cmd") + "\"");
+                    var uninstaller = Path.Combine(targetDir, "MythclassUninstall.exe");
+                    key.SetValue("UninstallString", "\"" + uninstaller + "\"");
+                    key.SetValue("QuietUninstallString", "\"" + uninstaller + "\" --silent");
                     key.SetValue("NoModify", 1, RegistryValueKind.DWord);
                     key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
                     key.SetValue("EstimatedSize", 140000, RegistryValueKind.DWord);
@@ -261,61 +270,6 @@ namespace MythclassSetup
                 Program.TryLog("安装失败：" + ex);
                 Step("出错了：" + ex.Message);
                 throw;
-            }
-        }
-    }
-
-    /// <summary>卸载：删进程、计划任务、快捷方式、登记、整个目录</summary>
-    static class Uninstaller
-    {
-        public static int Run()
-        {
-            try
-            {
-                foreach (var p in Process.GetProcessesByName("MythclassClient"))
-                {
-                    try { p.Kill(); } catch { }
-                }
-                foreach (var task in new[] { "MythclassClient", "MythclassGuard" })
-                {
-                    var psi = new ProcessStartInfo("schtasks.exe", "/Delete /TN " + task + " /F");
-                    psi.CreateNoWindow = true;
-                    psi.UseShellExecute = false;
-                    try { Process.Start(psi).WaitForExit(10000); } catch { }
-                }
-
-                try { Registry.LocalMachine.DeleteSubKeyTree(Program.RegPath, false); } catch { }
-
-                var smDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs");
-                try { File.Delete(Path.Combine(smDir, Program.AppName + ".lnk")); } catch { }
-                try
-                {
-                    File.Delete(Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
-                        Program.AppName + ".lnk"));
-                }
-                catch { }
-
-                var dir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-                if (!string.IsNullOrEmpty(dir) && File.Exists(Path.Combine(dir, Program.ExeName)))
-                {
-                    // 自己删自己：交给一个独立进程，等它退出后再删
-                    var psi = new ProcessStartInfo("cmd.exe",
-                        "/c ping 127.0.0.1 -n 2 >nul & rd /s /q \"" + dir + "\"");
-                    psi.CreateNoWindow = true;
-                    psi.UseShellExecute = false;
-                    Process.Start(psi);
-                }
-
-                MessageBox.Show("卸干净了。\n\n运行数据（%APPDATA%\\Mythclass）保留着，需要的话可以自己删。",
-                    Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return 0;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("卸载时出错：" + ex.Message, Program.AppName,
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return 1;
             }
         }
     }
