@@ -30,7 +30,7 @@ namespace MythclassSetup
         // 对话框和「程序和功能」里给用户看的全名
         public const string DisplayName = "Mythclass 若思班级一体机管理系统";
         public const string ExeName = "MythclassClient.exe";
-        public const string Version = "2.1.1";
+        public const string Version = "2.1.2";
         public const string DefaultDir = @"C:\Program Files (x86)\Mythclass";
         public const string RegPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MythclassClient";
         public const string PayloadResource = "payload.zip";
@@ -39,6 +39,8 @@ namespace MythclassSetup
         static bool optSilent = false;
         static bool optNoElevate = false;
         static bool optNoLaunch = false;
+        static bool optStartMenu = false;
+        static bool optDesktop = false;
         static string uninstallPassword = null;
 
         [STAThread]
@@ -51,6 +53,9 @@ namespace MythclassSetup
                     case "--target": if (i + 1 < args.Length) optTarget = args[++i]; break;
                     case "--silent": optSilent = true; break;
                     case "--noelevate": optNoElevate = true; break;
+                    // 静默装也建快捷方式（批量部署用）
+                    case "--startmenu": optStartMenu = true; break;
+                    case "--desktop": optDesktop = true; break;
                     // 装的时候就设好卸载密码（防止学生自己卸）
                     case "--uninstall-password":
                         if (i + 1 < args.Length) uninstallPassword = args[++i];
@@ -81,7 +86,7 @@ namespace MythclassSetup
                 try
                 {
                     var engine = new InstallEngine();
-                    engine.Install(optTarget ?? DefaultDir, false, false, !optNoLaunch, null);
+                    engine.Install(optTarget ?? DefaultDir, optStartMenu, optDesktop, !optNoLaunch, null);
                     return 0;
                 }
                 catch (Exception ex)

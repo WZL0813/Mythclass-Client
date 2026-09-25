@@ -176,8 +176,25 @@ namespace MythclassSetup
 
             if (startMenu)
             {
-                var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs");
-                SaveShortcut(shell, Path.Combine(dir, Program.AppName + ".lnk"), exe, targetDir);
+                // 放进「Mythclass」文件夹里，开始菜单不至于被一堆单个条目占满。
+                // 建不了（比如不是管理员）也不能让整个安装失败，所以包一层。
+                try
+                {
+                    var programs = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs");
+                    var group = Path.Combine(programs, "Mythclass");
+                    Directory.CreateDirectory(group);
+                    SaveShortcut(shell, Path.Combine(group, Program.AppName + ".lnk"), exe, targetDir);
+
+                    // 顺手清掉早期版本丢在「程序」根目录下的那些
+                    TryDelete(Path.Combine(programs, Program.AppName + ".lnk"));
+                    TryDelete(Path.Combine(programs, "Mythclass 客户端.lnk"));
+                    TryDelete(Path.Combine(programs, "MythclassClient.lnk"));
+                }
+                catch (Exception err)
+                {
+                    Step("  （开始菜单快捷方式没建成：" + err.Message + "）");
+                }
             }
             if (desktop)
             {

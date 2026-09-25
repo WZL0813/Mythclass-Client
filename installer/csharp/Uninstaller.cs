@@ -283,13 +283,16 @@ namespace MythclassSetup
 
             step("正在删开始菜单与桌面快捷方式…");
             // 名字必须和安装时一致，另外顺手清掉早期版本用错的名字
-            var startMenu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs");
+            var programs = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs");
             var desktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
             foreach (var name in new[] { Program.AppName, "Mythclass 客户端", "MythclassClient" })
             {
-                TryDelete(Path.Combine(startMenu, name + ".lnk"));
+                TryDelete(Path.Combine(programs, name + ".lnk"));
                 TryDelete(Path.Combine(desktop, name + ".lnk"));
             }
+            // 开始菜单里那个「Mythclass」文件夹也一起收掉
+            TryDeleteDir(Path.Combine(programs, "Mythclass"));
 
             step("正在清卸载密码…");
             // 密码是机器级设置，卸干净了就该一起清掉，
