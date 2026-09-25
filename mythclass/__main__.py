@@ -39,6 +39,10 @@ class MythclassClient:
         self.api: ServerApi | None = None
         self.socket: SocketClient | None = None
         self.connected = False
+        # 「已连接」气泡：只在断开后重连上时弹一次，别一直烦人
+        self._notified_connected = False
+        self._ever_connected = False
+        self._last_connect_notify = 0.0
 
         self.file_monitor: FileMonitor | None = None
         self.audio_monitor: AudioMonitor | None = None
@@ -139,9 +143,25 @@ class MythclassClient:
             time.sleep(1)
 
     def _on_state(self, connected: bool) -> None:
+        was = self.connected
         self.connected = connected
-        if connected:
-            self.tray.notify("已经连上服务端。")
+        if not connected:
+            self._notified_connected = False
+            return
+
+        # 本来就在线：重复回调，不弹
+        if was:
+            return
+        # 刚启动那次不弹（用户自己刚开的客户端，用不着告诉）
+        # 只有真弹了才记时间 —— 否则静默的首次连接会把冷却占掉，
+        # 紧接着的重连反而弹不出来
+        if self._ever_connected:
+            now = time.time()
+            if now - self._last_connect_notify < 300:
+                return  # 5 分钟内弹过，网络抖动别刷屏
+            self.tray.notify("已经重新连上服务端。")
+            self._last_connect_notify = now
+        self._ever_connected = True
 
     def _on_ready(self) -> None:
         self.socket.emit(
