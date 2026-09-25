@@ -86,7 +86,8 @@ def _notice_options(raw) -> list[dict]:
             continue
         label = str(item.get("label") or "").strip()
         if index == 2:
-            out.append({"kind": "input", "label": label or "写点什么"})
+            send = str(item.get("send") or "").strip() or "发送"
+            out.append({"kind": "input", "label": label or "写点什么", "send": send})
         elif index == 0:
             out.append({"kind": "primary", "label": label or "知道了"})
         else:
@@ -157,13 +158,35 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
 
         for option in options:
             if option["kind"] == "input":
+                hint = option["label"]
                 entry = tk.Entry(bar, font=("Microsoft YaHei", 11), width=22, relief="flat",
-                                 bg="#ffffff", fg="#10160f")
+                                 bg="#ffffff", fg="#9aa79a")
                 entry.pack(side="left", padx=(0, 8), ipady=5)
+                # 提示文字做成真占位符：显示在输入框里，一聚焦就清掉
+                entry.insert(0, hint)
+
+                def on_focus_in(_event, ent=entry, tip=hint):
+                    if ent.get() == tip:
+                        ent.delete(0, "end")
+                        ent.configure(fg="#10160f")
+
+                def on_focus_out(_event, ent=entry, tip=hint):
+                    if not ent.get().strip():
+                        ent.insert(0, tip)
+                        ent.configure(fg="#9aa79a")
+
+                def submit(ent=entry, tip=hint):
+                    value = ent.get().strip()
+                    if value == tip:
+                        value = ""
+                    finish("（输入）" + (value or "（空）"))
+
+                entry.bind("<FocusIn>", on_focus_in)
+                entry.bind("<FocusOut>", on_focus_out)
+                entry.bind("<Return>", lambda _e, f=submit: f())
                 tk.Button(
-                    bar, text=option["label"], relief="flat", padx=16, pady=4,
-                    bg="#e2ddcc", fg="#10160f",
-                    command=lambda e=entry: finish("（输入）" + (e.get().strip() or "（空）")),
+                    bar, text=option.get("send") or "发送", relief="flat", padx=16, pady=4,
+                    bg="#e2ddcc", fg="#10160f", command=submit,
                 ).pack(side="left", padx=(0, 8))
             elif option["kind"] == "primary":
                 tk.Button(
@@ -186,11 +209,15 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
 
         # 右上角关掉也算「关掉了」
         root.protocol("WM_DELETE_WINDOW", lambda: finish("（关掉了）"))
+
+        # 退出全屏放右上角（主人要求）
         if fullscreen:
-            tk.Button(
-                bar, text="退出全屏", relief="flat", padx=12, pady=4, bg="#e2ddcc", fg="#10160f",
+            quit_btn = tk.Button(
+                root, text="退出全屏", relief="flat", padx=12, pady=3,
+                bg="#e2ddcc", fg="#10160f",
                 command=lambda: root.attributes("-fullscreen", False),
-            ).pack(side="left")
+            )
+            quit_btn.place(relx=1.0, x=-12, y=10, anchor="ne")
         root.mainloop()
 
     threading.Thread(target=show, daemon=True).start()

@@ -380,6 +380,7 @@ PAGE = """<!doctype html>
   .nt-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
   .nt-opt { display: grid; grid-template-columns: 168px minmax(0,1fr); gap: 10px; align-items: center; margin-bottom: 8px; }
   .nt-slot { color: var(--sage); font-size: 12.5px; }
+  .nt-col { display: grid; gap: 6px; }
   .nt-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
   .btn.gh { background: transparent; border: 1px solid var(--line); color: var(--sage); }
 
@@ -453,7 +454,10 @@ PAGE = """<!doctype html>
       </div>
       <div class="nt-opt">
         <label class="nt-row"><input type="checkbox" id="ntOn2"><span class="nt-slot">输入框</span></label>
-        <input class="nt-input" id="ntLabel2" maxlength="12" placeholder="输入框的提示文字，比如：写下你的想法">
+        <div class="nt-col">
+          <input class="nt-input" id="ntLabel2" maxlength="12" placeholder="输入框的提示文字，比如：写下你的想法">
+          <input class="nt-input" id="ntSend2" maxlength="12" placeholder="发送选项：发送按钮上的字，比如：提交">
+        </div>
       </div>
 
       <div class="nt-actions">
@@ -661,7 +665,12 @@ function noticeArgs() {
   const opts = [];
   for (let i = 0; i < 3; i++) {
     if (!$('ntOn' + i).checked) continue;
-    opts.push({ on: true, label: ($('ntLabel' + i).value || '').trim(), slot: i });
+    opts.push({
+      on: true,
+      label: ($('ntLabel' + i).value || '').trim(),
+      slot: i,
+      send: i === 2 ? ($('ntSend2').value || '').trim() : '',
+    });
   }
   return {
     title: ($('ntTitle').value || '').trim() || '老师有话要说',
