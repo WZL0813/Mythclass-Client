@@ -206,11 +206,14 @@ class MythclassClient:
         }
 
     def _lan_frame(self) -> bytes | None:
-        """本地网页要一帧画面。按需抓，抓完就完（不依赖屏幕流开着）"""
-        try:
-            import io
+        """本地网页要一帧画面。按需抓，抓完就完（不依赖屏幕流开着）
 
-            from PIL import Image
+        注意：monitors.grab_thumbnail() 返回的是 base64 data URL 字符串，
+        不是 bytes、也不是 PIL Image —— 原来只认后两种，所以永远返回 None，
+        本地网页就一直显示「抓不到画面」。
+        """
+        try:
+            import base64
 
             from . import monitors
 
@@ -219,13 +222,13 @@ class MythclassClient:
                 return None
             if isinstance(shot, bytes):
                 return shot
-            buf = io.BytesIO()
-            if isinstance(shot, Image.Image):
-                shot.convert("RGB").save(buf, format="JPEG", quality=60)
-                return buf.getvalue()
+            if isinstance(shot, str):
+                if "base64," in shot:
+                    return base64.b64decode(shot.split("base64,", 1)[1])
+                return base64.b64decode(shot, validate=False)
             return None
         except Exception as err:
-            self.log(f"本地网页抓画面失败：{err}", logging.WARNING)
+            self.log(f"本地网页抓画面失败：{type(err).__name__}: {err}", logging.WARNING)
             return None
 
     def _note_teacher(self, sender: dict) -> None:
@@ -462,6 +465,13 @@ class MythclassClient:
         elif guard.task_manager_disabled():
             # 以前开过，现在配置里关掉了，顺手放开
             guard.set_task_manager_disabled(False)
+
+        # 本机局域网密钥：启动就生成，别等注册成功 ——
+        # 服务器不通时本地网页照样要能用
+        try:
+            self.log(f"本机局域网密钥：{trust.own_key()}")
+        except Exception as err:
+            self.log(f"生成局域网密钥失败：{err}", logging.WARNING)
 
         threading.Thread(target=self._connect_loop, name="mythclass-connect", daemon=True).start()
         threading.Thread(target=self._upload_loop, name="mythclass-upload", daemon=True).start()
