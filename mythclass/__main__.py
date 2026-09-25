@@ -322,6 +322,12 @@ class MythclassClient:
         if command == "status":
             return True, f"v{__version__}，屏幕流{'开着' if self.screen.alive() else '关着'}"
 
+        if command == "message":
+            # 局域网网页是一问一答，等它回答再返回
+            from .commands import cmd_message
+
+            return cmd_message(args or {}, wait=True)
+
         try:
             return execute(command, args or {})
         except Exception as err:
@@ -343,6 +349,18 @@ class MythclassClient:
         elif command == "screen_stop":
             self.screen.stop()
             ok, output = True, "屏幕流关了"
+        elif command == "message":
+            # 通知：先回一条「已弹出」，学生点了再用 command_result
+            # 补一条「回答：xxx」——教师端就收到回复了
+            from .commands import cmd_message
+
+            def _reply(answer: str, rid=request_id) -> None:
+                try:
+                    self.api.command_result(rid, "message", True, f"回答：{answer}")
+                except Exception as err:
+                    self.log(f"回传通知回答失败：{err}", logging.WARNING)
+
+            ok, output = cmd_message(args, on_reply=_reply)
         elif command == "request_frame":
             threading.Thread(target=self._send_thumb, args=(args,), daemon=True).start()
             ok, output = True, "给你抓了张小图"

@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import tkinter as tk
 import urllib.request
 from pathlib import Path
@@ -65,28 +66,142 @@ def cmd_logout(args: dict) -> tuple[bool, str]:
     return _run("shutdown /l")
 
 
-def cmd_message(args: dict) -> tuple[bool, str]:
-    text = str(args.get("text") or "").strip() or "老师有话要说"
-    title = str(args.get("title") or "Mythclass 通知")
+NOTICE_TITLE = "Mythclass消息通知"
 
-    def show():
+
+def _notice_options(raw) -> list[dict]:
+    """把教师端传来的选项规整成最多三个按钮
+
+    位置决定样式（主人定的）：
+      第一个 = 高亮按钮，第二个 = 普通按钮，第三个 = 输入框
+    没勾的（on=False）直接跳过。
+    """
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    for index, item in enumerate(raw[:3]):
+        if not isinstance(item, dict):
+            continue
+        if item.get("on") is False:
+            continue
+        label = str(item.get("label") or "").strip()
+        if index == 2:
+            out.append({"kind": "input", "label": label or "写点什么"})
+        elif index == 0:
+            out.append({"kind": "primary", "label": label or "知道了"})
+        else:
+            out.append({"kind": "normal", "label": label or "稍后再说"})
+    return out
+
+
+def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, str]:
+    """弹一条通知。
+
+    on_reply：学生回答后用这个回调把答案交出去（走 socket 的用）
+    wait：等学生回答完再返回（局域网网页那种一问一答的用，最多等 120 秒）
+    """
+    title = str(args.get("title") or "老师有话要说").strip() or "老师有话要说"
+    body = str(args.get("body") or args.get("text") or "").strip() or "老师有话要说"
+    topmost = bool(args.get("topmost", True))
+    fullscreen = bool(args.get("fullscreen", False))
+    options = _notice_options(args.get("options"))
+
+    box: dict = {"answer": None}
+    done = threading.Event() if wait else None
+
+    def show() -> None:
         root = tk.Tk()
-        root.title(title)
-        root.attributes("-topmost", True)
+        # 窗口标题固定，不跟着内容变（主人要求）
+        root.title(NOTICE_TITLE)
+        if topmost:
+            root.attributes("-topmost", True)
         root.configure(bg="#f3efe3")
-        root.geometry("460x200+%d+%d" % (max(root.winfo_screenwidth() // 2 - 230, 0), max(root.winfo_screenheight() // 3, 0)))
-        frame = tk.Frame(root, bg="#f3efe3", padx=26, pady=22)
+        if fullscreen:
+            root.attributes("-fullscreen", True)
+        else:
+            w, h = 520, 300
+            root.geometry(
+                "%dx%d+%d+%d"
+                % (w, h, max(root.winfo_screenwidth() // 2 - w // 2, 0),
+                   max(root.winfo_screenheight() // 3, 0))
+            )
+
+        frame = tk.Frame(root, bg="#f3efe3", padx=30, pady=26)
         frame.pack(fill="both", expand=True)
-        tk.Label(frame, text=title, bg="#f3efe3", fg="#2f4f3e", font=("Microsoft YaHei", 14, "bold")).pack(anchor="w")
-        tk.Message(frame, text=text, bg="#f3efe3", fg="#10160f", width=390, font=("Microsoft YaHei", 12)).pack(anchor="w", pady=(12, 16))
-        tk.Button(frame, text="知道了", command=root.destroy, bg="#2f4f3e", fg="#f3efe3", relief="flat", padx=18, pady=4).pack(anchor="e")
-        root.after(60000, root.destroy)  # 一分钟没人点就自己关
+
+        tk.Label(
+            frame, text=title, bg="#f3efe3", fg="#2f4f3e",
+            font=("Microsoft YaHei", 16, "bold"), wraplength=440, justify="left",
+        ).pack(anchor="w")
+        tk.Message(
+            frame, text=body, bg="#f3efe3", fg="#10160f",
+            width=440, font=("Microsoft YaHei", 12),
+        ).pack(anchor="w", pady=(14, 18), fill="both", expand=True)
+
+        def finish(answer: str) -> None:
+            box["answer"] = answer
+            if on_reply is not None:
+                try:
+                    on_reply(answer)
+                except Exception:
+                    pass
+            if done is not None:
+                done.set()
+            try:
+                root.destroy()
+            except Exception:
+                pass
+
+        bar = tk.Frame(frame, bg="#f3efe3")
+        bar.pack(fill="x", side="bottom")
+
+        for option in options:
+            if option["kind"] == "input":
+                entry = tk.Entry(bar, font=("Microsoft YaHei", 11), width=22, relief="flat",
+                                 bg="#ffffff", fg="#10160f")
+                entry.pack(side="left", padx=(0, 8), ipady=5)
+                tk.Button(
+                    bar, text=option["label"], relief="flat", padx=16, pady=4,
+                    bg="#e2ddcc", fg="#10160f",
+                    command=lambda e=entry: finish("（输入）" + (e.get().strip() or "（空）")),
+                ).pack(side="left", padx=(0, 8))
+            elif option["kind"] == "primary":
+                tk.Button(
+                    bar, text=option["label"], relief="flat", padx=20, pady=5,
+                    bg="#2f4f3e", fg="#f3efe3", activebackground="#3f6b52", activeforeground="#ffffff",
+                    command=lambda o=option: finish(o["label"]),
+                ).pack(side="right", padx=(8, 0))
+            else:
+                tk.Button(
+                    bar, text=option["label"], relief="flat", padx=18, pady=5,
+                    bg="#e2ddcc", fg="#10160f",
+                    command=lambda o=option: finish(o["label"]),
+                ).pack(side="right", padx=(8, 0))
+
+        if not options:
+            tk.Button(
+                bar, text="知道了", relief="flat", padx=20, pady=5,
+                bg="#2f4f3e", fg="#f3efe3", command=lambda: finish("知道了"),
+            ).pack(side="right")
+
+        # 右上角关掉也算「关掉了」
+        root.protocol("WM_DELETE_WINDOW", lambda: finish("（关掉了）"))
+        if fullscreen:
+            tk.Button(
+                bar, text="退出全屏", relief="flat", padx=12, pady=4, bg="#e2ddcc", fg="#10160f",
+                command=lambda: root.attributes("-fullscreen", False),
+            ).pack(side="left")
         root.mainloop()
 
-    import threading
+    threading.Thread(target=show, daemon=True).start()
 
-    threading.Thread(target=show, name="mythclass-message", daemon=True).start()
-    return True, "弹窗已经推过去了"
+    if not wait:
+        return True, "通知已弹出，等他回答"
+
+    # 等回答（局域网网页用）：最多两分钟
+    if done is not None and not done.wait(120):
+        return False, "等了两分钟没人回"
+    return True, f"回答：{box['answer']}"
 
 
 def cmd_open_url(args: dict) -> tuple[bool, str]:
