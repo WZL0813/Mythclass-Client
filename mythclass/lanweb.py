@@ -254,106 +254,261 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mythclass · 局域网直连</title>
+<title>Mythclass · 局域网控制台</title>
 <style>
   :root {
     --ink: #0f1411; --panel: #141b17; --line: #2a3a2e;
-    --text: #e8efe6; --dim: #8fa88e; --moss: #5e9a73;
+    --text: #e8efe6; --dim: #8fa88e; --sage: #8fa88e; --moss: #5e9a73;
+    --amber: #c97b3c;
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
-    margin: 0; min-height: 100vh; color: var(--text);
-    font: 15px/1.65 "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+    margin: 0; color: var(--text);
+    font: 15px/1.6 "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
     background:
-      radial-gradient(1100px 620px at 8% -10%, rgba(94,154,115,.16), transparent 62%),
-      radial-gradient(760px 420px at 108% 8%, rgba(94,154,115,.09), transparent 60%),
+      radial-gradient(1100px 620px at 6% -12%, rgba(94,154,115,.15), transparent 62%),
+      radial-gradient(760px 420px at 108% 6%, rgba(94,154,115,.08), transparent 60%),
       var(--ink);
     background-attachment: fixed;
   }
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 34px 26px 60px; }
-  header { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; justify-content: space-between; }
-  h1 { margin: 0; font-size: 26px; letter-spacing: .5px; }
-  .sub { color: var(--dim); font-size: 13px; margin-top: 6px; }
-  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; color: var(--dim); font-size: 12.5px; }
+  .wrap { max-width: 1500px; margin: 0 auto; padding: 14px 16px 40px; }
+
+  /* 顶部：品牌 + 机器名 + 状态 */
+  .brand-row { display: flex; align-items: center; gap: 12px; padding: 6px 2px 14px; }
+  .mark {
+    width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+    border: 1px solid rgba(94,154,115,.45); background: rgba(94,154,115,.14); color: #9fd0ac;
+  }
+  .brand-name { font-size: 17px; font-weight: 600; letter-spacing: .4px; }
+  .brand-sub { color: var(--dim); font-size: 12.5px; }
+  .pills { margin-left: auto; display: flex; gap: 8px; }
+  .pill {
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px;
+    color: var(--dim); font-size: 12.5px; white-space: nowrap;
+  }
   .pill.on { border-color: rgba(94,154,115,.5); color: #a6d4b3; background: rgba(94,154,115,.12); }
-  .grid { display: grid; grid-template-columns: 1.55fr .95fr; gap: 20px; margin-top: 26px; }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
-  .card h2 { margin: 0 0 12px; font-size: 15px; color: var(--dim); font-weight: 500; }
-  #screen { width: 100%; border-radius: 10px; background: #0b0f0c; min-height: 260px; display: block; border: 1px solid var(--line); }
-  input, button { font: inherit; }
+
+  /* 工具条 */
+  .tools {
+    display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 12px;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+  }
+  .tool {
+    display: inline-flex; flex-direction: column; align-items: center; gap: 3px;
+    min-width: 62px; padding: 7px 8px; border-radius: 9px; cursor: pointer;
+    border: 1px solid transparent; background: transparent; color: var(--dim); font: inherit; font-size: 12px;
+  }
+  .tool:hover:not(:disabled) { background: rgba(243,239,227,.06); color: var(--text); border-color: rgba(143,168,142,.3); }
+  .tool:disabled { opacity: .35; cursor: not-allowed; }
+  .tool svg { width: 17px; height: 17px; }
+
+  /* 主体三栏 */
+  .grid { display: grid; grid-template-columns: var(--rail-w, 264px) minmax(0,1fr) var(--ev-w, 274px); gap: 14px; margin-top: 14px; transition: grid-template-columns .28s ease; }
+  .grid.rail-off { --rail-w: 0px; }
+  .grid.events-off { --ev-w: 0px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .card h2 { margin: 0 0 10px; font-size: 13.5px; color: var(--dim); font-weight: 500; }
+  .grid.rail-off .rail, .grid.events-off .events { overflow: hidden; padding: 0; border: 0; opacity: 0; pointer-events: none; }
+
+  .kv { display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 6px 8px; font-size: 13px; }
+  .kv b { color: var(--dim); font-weight: 400; }
+  .kv span { word-break: break-all; }
+  ul { margin: 0; padding-left: 16px; color: var(--dim); font-size: 13px; }
+
+  /* 屏幕区 */
+  .screen-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px; border-radius: 9px;
+    border: 1px solid var(--line); background: #1b241e; color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .btn.primary { background: #3f6b52; border-color: #4c7d61; color: #f1f6ef; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn svg { width: 15px; height: 15px; }
+  .stats { margin-left: auto; display: flex; gap: 12px; color: var(--dim); font-size: 12.5px; }
+  #screen { width: 100%; border-radius: 10px; border: 1px solid var(--line); background: #0b0f0c; min-height: 300px; display: block; object-fit: contain; }
+  .empty { color: var(--dim); font-size: 13px; text-align: center; padding: 26px 10px 6px; }
+
+  /* 事件栏 */
+  .ev-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .ev-tab { padding: 5px 11px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--dim); font: inherit; font-size: 13px; cursor: pointer; }
+  .ev-tab.active { color: var(--text); border-color: var(--line); background: rgba(243,239,227,.05); }
+  .ev-list { list-style: none; margin: 0; padding: 0; max-height: 62vh; overflow: auto; }
+  .ev-list li { display: flex; gap: 8px; padding: 6px 0; border-bottom: 1px dashed rgba(143,168,142,.14); font-size: 12.5px; }
+  .ev-time { color: #6f8a70; flex: 0 0 62px; }
+  .ev-text { color: #c9d6c6; word-break: break-all; }
+  .ev-text.bad { color: #e0a07a; }
+
+  /* 贴屏幕边缘的伸缩竖条（和教师端同一套） */
+  .edge-toggle {
+    position: fixed; top: 50%; transform: translateY(-50%); z-index: 40;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 64px; padding: 0; cursor: pointer;
+    border: 1px solid rgba(143,168,142,.22);
+    background: color-mix(in srgb, var(--ink) 72%, transparent);
+    color: var(--sage); backdrop-filter: blur(8px);
+  }
+  .edge-toggle:hover { color: #c9e6d2; border-color: rgba(94,154,115,.55); }
+  .edge-toggle.left { left: 0; border-left: 0; border-radius: 0 10px 10px 0; }
+  .edge-toggle.right { right: 0; border-right: 0; border-radius: 10px 0 0 10px; }
+  .edge-toggle svg { width: 14px; height: 14px; }
+
+  /* 要密钥那一屏 */
+  .gate { max-width: 560px; margin: 8vh auto 0; }
   input[type=password], input[type=text] {
     width: 100%; padding: 10px 12px; border-radius: 9px; color: var(--text);
-    background: #0f1613; border: 1px solid var(--line);
+    background: #0f1613; border: 1px solid var(--line); font: inherit;
   }
-  button {
-    cursor: pointer; border-radius: 9px; padding: 9px 14px; color: var(--text);
-    background: #1b241e; border: 1px solid var(--line);
-  }
-  button.primary { background: #3f6b52; border-color: #4c7d61; color: #f1f6ef; }
-  button:disabled { opacity: .45; cursor: not-allowed; }
   .row { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 12px; }
   .muted { color: var(--dim); font-size: 13px; }
-  .out { margin-top: 12px; font-size: 13px; color: #a6bca4; min-height: 22px; white-space: pre-wrap; }
-  ul { margin: 0; padding-left: 18px; color: var(--dim); font-size: 13.5px; }
-  .hidden { display: none; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <div>
-      <h1 id="name">正在读这台机器…</h1>
-      <div class="sub" id="sub">局域网直连 · 不经服务器</div>
+  <div class="brand-row">
+    <div class="mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/></svg>
     </div>
     <div>
+      <div class="brand-name">局域网控制台</div>
+      <div class="brand-sub" id="sub">直连这台机器 · 不经过服务器</div>
+    </div>
+    <div class="pills">
       <span class="pill" id="ipPill">—</span>
       <span class="pill" id="keyPill">未连接</span>
     </div>
-  </header>
+  </div>
 
-  <section class="card" id="authCard" style="margin-top:26px">
+  <!-- 要密钥 -->
+  <section class="card gate" id="gate">
     <h2>先对一下暗号</h2>
-    <p class="muted">配对密钥在一体机的客户端里看：命令行跑 <code>MythclassClient.exe --status</code>，或者翻它的日志。同一台电脑的老师连满 3 次才会发密钥。</p>
+    <p class="muted">
+      配对密钥在这台机器的客户端里看：托盘右键 → 状态，或者命令行跑
+      <code>MythclassClient.exe --status</code>。
+      从教师端点「打开局域网控制台」进来的链接会自带密钥，不用手输。
+    </p>
     <div class="row">
       <input type="password" id="key" placeholder="粘贴配对密钥" autocomplete="off">
-      <button class="primary" id="authBtn">连上</button>
+      <button class="btn primary" id="authBtn">连上</button>
     </div>
-    <div class="out" id="authOut"></div>
+    <div class="muted" id="authOut" style="margin-top:10px"></div>
   </section>
 
-  <div class="grid hidden" id="main">
-    <section class="card">
-      <h2>画面</h2>
-      <img id="screen" alt="这台机器的屏幕">
-      <div class="row">
-        <button class="primary" id="watchBtn">开始看</button>
-        <button id="stopBtn">停下</button>
-        <span class="muted" id="fps" style="align-self:center"></span>
-      </div>
-    </section>
-    <section class="card">
-      <h2>常用操作</h2>
-      <div class="row">
-        <button data-cmd="lock">锁屏</button>
-        <button data-cmd="unlock">解锁</button>
-        <button data-cmd="shutdown">关机</button>
-        <button data-cmd="reboot">重启</button>
-        <button data-cmd="logout">注销</button>
-        <button data-cmd="message">发消息</button>
-        <button data-cmd="screen_stop">关屏幕流</button>
-      </div>
-      <h2 style="margin-top:20px">这台机器归属</h2>
-      <ul id="owners"><li>—</li></ul>
-      <div class="out" id="out"></div>
-    </section>
+  <div id="console" class="hidden">
+    <!-- 工具条 -->
+    <div class="tools" id="tools"></div>
+
+    <div class="grid" id="grid">
+      <!-- 左：机器信息 -->
+      <aside class="card rail">
+        <h2>这台机器</h2>
+        <div class="kv" id="info"></div>
+        <h2 style="margin-top:16px">归属老师</h2>
+        <ul id="owners"><li>—</li></ul>
+      </aside>
+
+      <!-- 中：屏幕 -->
+      <section class="card">
+        <div class="screen-head">
+          <button class="btn primary" id="watchBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 5v14l11-7z"/></svg>
+            开始看
+          </button>
+          <button class="btn" id="stopBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
+            停下
+          </button>
+          <button class="btn" id="fullBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 9V4h5"/><path d="M20 15v5h-5"/><path d="M4 4l6 6"/><path d="M20 20l-6-6"/></svg>
+            全屏
+          </button>
+          <div class="stats">
+            <span id="fps">—</span>
+            <span id="size">—</span>
+          </div>
+        </div>
+        <img id="screen" alt="这台机器的屏幕">
+        <div class="empty" id="hint">点「开始看」拉画面。</div>
+      </section>
+
+      <!-- 右：事件 -->
+      <aside class="card events">
+        <div class="ev-tabs">
+          <button class="ev-tab active" id="tabEvent">事件</button>
+          <button class="ev-tab" id="tabMessage">消息</button>
+        </div>
+        <ul class="ev-list" id="evList"></ul>
+      </aside>
+    </div>
+
+    <!-- 贴屏幕边缘的伸缩条 -->
+    <button class="edge-toggle left" id="edgeLeft" title="收起／展开「这台机器」">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 6l-6 6 6 6"/></svg>
+    </button>
+    <button class="edge-toggle right" id="edgeRight" title="收起／展开「事件 / 消息」">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 6l6 6-6 6"/></svg>
+    </button>
   </div>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const key = () => localStorage.getItem('mythkey') || '';
+const RAIL_KEY = 'myth.lan.rail';
+const EV_KEY = 'myth.lan.events';
 
+const TOOLS = [
+  ['lock', '锁屏', 'M7 10V8a5 5 0 0110 0v2M5 10h14v10H5z'],
+  ['unlock', '解锁', 'M7 10V8a5 5 0 019-3M5 10h14v10H5z'],
+  ['message', '弹消息', 'M4 5h16v11H8l-4 4z'],
+  ['screenshot', '截图', 'M4 8h3l2-2h6l2 2h3v11H4zM12 16a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z'],
+  ['net_ban', '禁止上网', 'M12 3a9 9 0 100 18 9 9 0 000-18zM6 6l12 12'],
+  ['net_allow', '放开上网', 'M12 3a9 9 0 100 18 9 9 0 000-18zM8 12.5l3 3 5-6'],
+  ['reboot', '重启', 'M20 12a8 8 0 11-3-6.2M20 4v5h-5'],
+  ['shutdown', '关机', 'M12 3v9M7.5 6.5a7 7 0 109 0'],
+];
+
+function icon(path) {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg>';
+}
+
+// 事件栏
+let evTab = 'event';
+const logs = { event: [], message: [] };
+function logEvent(text, bad) {
+  const t = new Date().toTimeString().slice(0, 8);
+  logs.event.unshift({ t, text, bad: !!bad });
+  if (logs.event.length > 120) logs.event.pop();
+  renderEvents();
+}
+function renderEvents() {
+  const list = evTab === 'event' ? logs.event : logs.message;
+  $('evList').innerHTML = list.length
+    ? list.map((e) => '<li><span class="ev-time">' + e.t + '</span><span class="ev-text' + (e.bad ? ' bad' : '') + '">' + e.text + '</span></li>').join('')
+    : '<li class="muted">还没有记录。</li>';
+}
+$('tabEvent').onclick = () => { evTab = 'event'; $('tabEvent').classList.add('active'); $('tabMessage').classList.remove('active'); renderEvents(); };
+$('tabMessage').onclick = () => { evTab = 'message'; $('tabMessage').classList.add('active'); $('tabEvent').classList.remove('active'); renderEvents(); };
+
+// 伸缩
+function applyFolds() {
+  $('grid').classList.toggle('rail-off', localStorage.getItem(RAIL_KEY) === '0');
+  $('grid').classList.toggle('events-off', localStorage.getItem(EV_KEY) === '0');
+}
+$('edgeLeft').onclick = () => {
+  const off = localStorage.getItem(RAIL_KEY) === '0';
+  localStorage.setItem(RAIL_KEY, off ? '1' : '0');
+  applyFolds();
+};
+$('edgeRight').onclick = () => {
+  const off = localStorage.getItem(EV_KEY) === '0';
+  localStorage.setItem(EV_KEY, off ? '1' : '0');
+  applyFolds();
+};
+
+// 接口
 async function api(path, body) {
   const opt = { headers: { 'X-Mythclass-Key': key() } };
   if (body !== undefined) {
@@ -367,92 +522,122 @@ async function api(path, body) {
   return { status: res.status, data };
 }
 
-function show(main) {
-  $('authCard').classList.toggle('hidden', main);
-  $('main').classList.toggle('hidden', !main);
-  $('keyPill').textContent = main ? '已连接' : '未连接';
-  $('keyPill').className = 'pill' + (main ? ' on' : '');
+function showConsole() {
+  $('gate').classList.add('hidden');
+  $('console').classList.remove('hidden');
+  $('keyPill').textContent = '已连接';
+  $('keyPill').className = 'pill on';
+  applyFolds();
 }
 
 async function loadInfo() {
   const { data } = await api('/api/info');
   if (!data) return;
-  $('name').textContent = data.name || '这台一体机';
-  $('sub').textContent = '局域网直连 · 不经服务器 · v' + (data.version || '?');
+  $('sub').textContent = '直连这台机器 · 不经过服务器 · v' + (data.version || '?');
   $('ipPill').textContent = '我的地址 ' + (data.clientIp || '?');
-  const owners = (data.teachers || []).map(t => t.username).filter(Boolean);
-  $('owners').innerHTML = owners.length
-    ? owners.map(n => '<li>' + n + '</li>').join('')
-    : '<li class="muted">还没绑定老师</li>';
-  if (data.trusted) show(true);
+  const rows = [
+    ['名称', data.name || '—'],
+    ['机器 ID', data.clientUid || '—'],
+    ['版本', 'v' + (data.version || '?')],
+    ['内网地址', (data.localIps || []).join('、') || '—'],
+  ];
+  $('info').innerHTML = rows.map(([k, v]) => '<b>' + k + '</b><span>' + v + '</span>').join('');
+  const owners = (data.teachers || []).map((t) => t.username).filter(Boolean);
+  $('owners').innerHTML = owners.length ? owners.map((n) => '<li>' + n + '</li>').join('') : '<li class="muted">还没绑定老师</li>';
+  if (data.trusted) showConsole();
 }
 
-async function doAuth() {
+$('authBtn').onclick = async () => {
   const k = $('key').value.trim();
   if (!k) { $('authOut').textContent = '密钥是空的'; return; }
   const { status, data } = await api('/api/auth', { key: k });
   if (status === 200) {
     localStorage.setItem('mythkey', k);
     $('authOut').textContent = '连上了';
-    show(true);
+    logEvent('配对密钥验证通过');
+    showConsole();
     loadInfo();
   } else {
     $('authOut').textContent = (data && data.message) || '密钥不对';
+    logEvent('密钥不对', true);
   }
-}
+};
+$('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('authBtn').click(); });
 
-let timer = null, frames = 0, t0 = 0;
-function startWatch() {
-  if (timer) return;
-  t0 = Date.now(); frames = 0;
-  const tick = () => {
-    const img = new Image();
-    img.onload = () => {
-      $('screen').src = img.src;
-      frames++;
-      const sec = (Date.now() - t0) / 1000;
-      $('fps').textContent = sec > 0 ? (frames / sec).toFixed(1) + ' 帧/秒' : '';
-    };
-    img.onerror = () => { $('fps').textContent = '抓不到画面'; };
-    img.src = '/frame?t=' + Date.now();
-  };
-  tick();
-  timer = setInterval(tick, 400);
-}
-function stopWatch() {
-  if (timer) { clearInterval(timer); timer = null; }
-  $('fps').textContent = '停了';
-}
+// 工具条
+$('tools').innerHTML = TOOLS.map(([cmd, label, p]) =>
+  '<button class="tool" data-cmd="' + cmd + '" title="' + label + '">' + icon(p) + '<span>' + label + '</span></button>'
+).join('');
+document.querySelectorAll('[data-cmd]').forEach((b) => {
+  b.onclick = () => send(b.dataset.cmd);
+});
 
 async function send(command) {
   let args = {};
   if (command === 'message') {
-    const text = prompt('要在一体机上显示什么？');
+    const text = prompt('要在这台机器上显示什么？');
     if (!text) return;
-    args = { text: text };
+    args = { text };
   }
-  const { data } = await api('/api/command', { command: command, args: args });
-  $('out').textContent = (data && (data.output || data.message)) || '没回话';
+  const { data } = await api('/api/command', { command, args });
+  const out = (data && (data.output || data.message)) || '没回话';
+  const label = (TOOLS.find((t) => t[0] === command) || [, command])[1];
+  logEvent(label + '：' + out, !(data && data.ok));
+  if (command === 'screenshot') grabOnce();
 }
 
-$('authBtn').onclick = doAuth;
-$('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') doAuth(); });
+// 画面
+let timer = null, frames = 0, t0 = 0;
+function tick() {
+  const img = new Image();
+  img.onload = () => {
+    $('screen').src = img.src;
+    frames++;
+    const sec = (Date.now() - t0) / 1000;
+    $('fps').textContent = sec > 0 ? (frames / sec).toFixed(1) + ' 帧/秒' : '—';
+    $('size').textContent = img.naturalWidth + '×' + img.naturalHeight;
+    $('hint').classList.add('hidden');
+  };
+  img.onerror = () => { $('fps').textContent = '抓不到画面'; };
+  img.src = '/frame?t=' + Date.now();
+}
+function startWatch() {
+  if (timer) return;
+  t0 = Date.now(); frames = 0;
+  tick();
+  timer = setInterval(tick, 250)   // 4 帧/秒，局域网里够顺了;
+  logEvent('开始看画面');
+}
+function stopWatch() {
+  if (timer) { clearInterval(timer); timer = null; }
+  $('fps').textContent = '停了';
+  logEvent('停下画面');
+}
+function grabOnce() {
+  const img = new Image();
+  img.onload = () => { $('screen').src = img.src; $('hint').classList.add('hidden'); };
+  img.src = '/frame?t=' + Date.now();
+}
 $('watchBtn').onclick = startWatch;
 $('stopBtn').onclick = stopWatch;
-document.querySelectorAll('[data-cmd]').forEach(b => { b.onclick = () => send(b.dataset.cmd); });
+$('fullBtn').onclick = () => {
+  const el = $('screen');
+  if (el.requestFullscreen) el.requestFullscreen();
+};
 
 (async () => {
-  // 链接里带 key（老师从教师端点过来就是这种）：自动连上，不用手输
   const fromUrl = new URLSearchParams(location.search).get('key');
   if (fromUrl) {
     localStorage.setItem('mythkey', fromUrl);
-    history.replaceState(null, '', location.pathname + location.search);
+    history.replaceState(null, '', location.pathname);
+    logEvent('密钥来自链接，自动连上');
   }
   if (key()) {
     const { status } = await api('/api/info');
-    if (status === 200) show(true);
+    if (status === 200) showConsole();
   }
   loadInfo();
+  renderEvents();
   setInterval(loadInfo, 15000);
 })();
 </script>
