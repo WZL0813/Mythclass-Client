@@ -361,6 +361,28 @@ PAGE = """<!doctype html>
   .edge-toggle.right { right: 0; border-right: 0; border-radius: 10px 0 0 10px; }
   .edge-toggle svg { width: 14px; height: 14px; }
 
+  /* 发通知对话框 */
+  .nt-mask {
+    position: fixed; inset: 0; z-index: 120; display: grid; place-items: center;
+    background: rgba(6, 10, 8, 0.62); backdrop-filter: blur(3px);
+  }
+  .nt-box {
+    width: min(560px, 92vw); max-height: 88vh; overflow: auto;
+    padding: 20px 22px 18px; border: 1px solid var(--line); border-radius: 16px;
+    background: var(--panel); color: var(--text); box-shadow: 0 24px 60px rgba(0,0,0,.45);
+  }
+  .nt-box h3 { margin: 0 0 6px; font-size: 16px; }
+  .nt-label { margin: 14px 0 6px; font-size: 12.5px; color: var(--sage); }
+  .nt-input {
+    width: 100%; padding: 9px 11px; border-radius: 9px; font: inherit; font-size: 13.5px;
+    background: #0f1613; color: var(--text); border: 1px solid var(--line);
+  }
+  .nt-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+  .nt-opt { display: grid; grid-template-columns: 168px minmax(0,1fr); gap: 10px; align-items: center; margin-bottom: 8px; }
+  .nt-slot { color: var(--sage); font-size: 12.5px; }
+  .nt-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+  .btn.gh { background: transparent; border: 1px solid var(--line); color: var(--sage); }
+
   /* 要密钥那一屏 */
   .gate { max-width: 560px; margin: 8vh auto 0; }
   input[type=password], input[type=text] {
@@ -402,6 +424,44 @@ PAGE = """<!doctype html>
     </div>
     <div class="muted" id="authOut" style="margin-top:10px"></div>
   </section>
+
+  <!-- 发通知对话框 -->
+  <div id="ntMask" class="nt-mask hidden">
+    <div class="nt-box">
+      <h3>发通知</h3>
+      <p class="muted" style="font-size:12.5px;margin:0 0 12px">
+        窗口标题固定是「Mythclass消息通知」，下面的标题和内容由你写。
+      </p>
+      <label class="nt-row"><input type="checkbox" id="ntTop" checked><span>置顶显示（压在其他窗口上面）</span></label>
+      <label class="nt-row"><input type="checkbox" id="ntFull"><span>全屏显示（占满整块屏幕）</span></label>
+
+      <p class="nt-label">标题</p>
+      <input class="nt-input" id="ntTitle" maxlength="40" placeholder="比如：第三节自习安排">
+
+      <p class="nt-label">内容</p>
+      <textarea class="nt-input" id="ntBody" rows="3" maxlength="300"
+                placeholder="比如：请把作业交到讲台，交完再看书。"></textarea>
+
+      <p class="nt-label">回复选项（最多三个，勾上才显示）</p>
+      <div class="nt-opt">
+        <label class="nt-row"><input type="checkbox" id="ntOn0" checked><span class="nt-slot">高亮按钮</span></label>
+        <input class="nt-input" id="ntLabel0" maxlength="12" value="知道了" placeholder="按钮上的字">
+      </div>
+      <div class="nt-opt">
+        <label class="nt-row"><input type="checkbox" id="ntOn1"><span class="nt-slot">普通按钮</span></label>
+        <input class="nt-input" id="ntLabel1" maxlength="12" placeholder="按钮上的字，比如：等一下">
+      </div>
+      <div class="nt-opt">
+        <label class="nt-row"><input type="checkbox" id="ntOn2"><span class="nt-slot">输入框</span></label>
+        <input class="nt-input" id="ntLabel2" maxlength="12" placeholder="输入框的提示文字，比如：写下你的想法">
+      </div>
+
+      <div class="nt-actions">
+        <button class="btn gh" id="ntCancel">取消</button>
+        <button class="btn primary" id="ntSend">发出去</button>
+      </div>
+    </div>
+  </div>
 
   <div id="console" class="hidden">
     <!-- 工具条 -->
@@ -588,12 +648,50 @@ document.querySelectorAll('[data-cmd]').forEach((b) => {
   b.onclick = () => send(b.dataset.cmd);
 });
 
+/** 打开「发通知」对话框（局域网这边也能自定义，不再用浏览器自带的 prompt） */
+function openNotice() {
+  $('ntMask').classList.remove('hidden');
+}
+
+function closeNotice() {
+  $('ntMask').classList.add('hidden');
+}
+
+function noticeArgs() {
+  const opts = [];
+  for (let i = 0; i < 3; i++) {
+    if (!$('ntOn' + i).checked) continue;
+    opts.push({ on: true, label: ($('ntLabel' + i).value || '').trim(), slot: i });
+  }
+  return {
+    title: ($('ntTitle').value || '').trim() || '老师有话要说',
+    body: ($('ntBody').value || '').trim() || '老师有话要说',
+    topmost: $('ntTop').checked,
+    fullscreen: $('ntFull').checked,
+    options: opts,
+  };
+}
+
+async function sendNotice() {
+  const args = noticeArgs();
+  closeNotice();
+  $('hint').classList.remove('hidden');
+  $('hint').textContent = '通知已发出去，等他回答…';
+  logEvent('发通知：' + args.title);
+  const { data } = await api('/api/command', { command: 'message', args });
+  const out = (data && (data.output || data.message)) || '没回话';
+  logEvent(out, !(data && data.ok));
+  $('hint').textContent = out;
+}
+
+$('ntCancel').onclick = closeNotice;
+$('ntSend').onclick = sendNotice;
+
 async function send(command) {
   let args = {};
   if (command === 'message') {
-    const text = prompt('要在这台机器上显示什么？');
-    if (!text) return;
-    args = { text };
+    // 局域网这边也要能自定义置顶/全屏/标题/内容/选项
+    return openNotice();
   }
   const { data } = await api('/api/command', { command, args });
   const out = (data && (data.output || data.message)) || '没回话';
