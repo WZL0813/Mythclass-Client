@@ -101,6 +101,15 @@ class LanWeb:
             # ------------------------------ 路由 ------------------------------
 
             def do_GET(self):
+                # 整体包一层：处理器里出异常会让浏览器看到「连接被关闭」，
+                # 完全看不出是哪儿的问题
+                try:
+                    self._do_get()
+                except Exception as err:
+                    outer.log(f"本地网页出错（GET {self.path}）：{type(err).__name__}: {err}")
+                    self._json(500, {"error": "INTERNAL", "message": str(err)})
+
+            def _do_get(self):
                 path = self.path.split("?")[0]
                 outer.hits += 1
 
@@ -131,6 +140,13 @@ class LanWeb:
                 self._json(404, {"error": "NOT_FOUND"})
 
             def do_POST(self):
+                try:
+                    self._do_post()
+                except Exception as err:
+                    outer.log(f"本地网页出错（POST {self.path}）：{type(err).__name__}: {err}")
+                    self._json(500, {"error": "INTERNAL", "message": str(err)})
+
+            def _do_post(self):
                 path = self.path.split("?")[0]
                 outer.hits += 1
                 length = int(self.headers.get("Content-Length") or 0)

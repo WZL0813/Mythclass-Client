@@ -71,7 +71,8 @@ namespace MythclassSetup
             catch { }
         }
 
-        static void Run(string exe, string args)
+        /// <summary>跑个外部命令，返回退出码（放防火墙规则要看它成没成）</summary>
+        static int Run(string exe, string args)
         {
             try
             {
@@ -80,8 +81,9 @@ namespace MythclassSetup
                 psi.UseShellExecute = false;
                 var p = Process.Start(psi);
                 p.WaitForExit(15000);
+                return p.ExitCode;
             }
-            catch { }
+            catch { return -1; }
         }
 
         /// <summary>清掉旧版本目录（只删自己那个，别人的东西不动）</summary>
@@ -160,6 +162,26 @@ namespace MythclassSetup
             {
                 if (s == null) return;
                 using (var f = File.Create(destPath)) s.CopyTo(f);
+            }
+        }
+
+        /// <summary>给局域网端口和本地网页放行入站（Windows 防火墙默认挡）</summary>
+        public void OpenFirewall()
+        {
+            Step("正在给局域网端口放行…");
+            try
+            {
+                Run("netsh.exe",
+                    "advfirewall firewall delete rule name=\"Mythclass 局域网直连\"");
+                var result = Run("netsh.exe",
+                    "advfirewall firewall add rule name=\"Mythclass 局域网直连\" " +
+                    "dir=in action=allow protocol=TCP localport=26924,26925 profile=any");
+                if (result != 0)
+                    Step("  （防火墙规则没加成，可能不是管理员；老师连不上就手动放行 26924/26925）");
+            }
+            catch (Exception err)
+            {
+                Step("  （防火墙规则跳过：" + err.Message + "）");
             }
         }
 
@@ -293,6 +315,7 @@ namespace MythclassSetup
                 Extract(targetDir);
                 Progress(92);
 
+                OpenFirewall();
                 CreateShortcuts(targetDir, startMenu, desktop);
                 Register(targetDir);
 

@@ -266,6 +266,16 @@ namespace MythclassSetup
             }
             System.Threading.Thread.Sleep(600);
 
+            step("正在撤防火墙规则…");
+            try
+            {
+                var fwPsi = new ProcessStartInfo("netsh.exe",
+                    "advfirewall firewall delete rule name=\"Mythclass 局域网直连\"")
+                { CreateNoWindow = true, UseShellExecute = false };
+                Process.Start(fwPsi).WaitForExit(10000);
+            }
+            catch { }
+
             step("正在删开始菜单与桌面快捷方式…");
             // 名字必须和安装时一致，另外顺手清掉早期版本用错的名字
             var programs = Path.Combine(

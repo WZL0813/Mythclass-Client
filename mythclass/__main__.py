@@ -186,8 +186,12 @@ class MythclassClient:
 
     def _lan_info(self) -> dict:
         """本地网页要的信息。绑定列表旧了就顺手刷新一次"""
-        if bindings.is_stale() and self.api.token:
-            self.refresh_bindings()
+        # 刷新绑定老师要发网络请求，服务器不通会一直等到超时 ——
+        # 本地网页的意义就是「服务器不通也能用」，绝不能在这里同步等。
+        # 所以：先把缓存里的数据返回，刷新丢到后台线程。
+        api = getattr(self, "api", None)
+        if bindings.is_stale() and api is not None and getattr(api, "token", None):
+            threading.Thread(target=self.refresh_bindings, daemon=True).start()
         data = bindings.load()
         return {
             "name": self.cfg.get("clientName") or "教室一体机",
@@ -460,9 +464,14 @@ class MythclassClient:
         threading.Thread(target=self._upload_loop, name="mythclass-upload", daemon=True).start()
         threading.Thread(target=self._housekeeping_loop, name="mythclass-housekeeping", daemon=True).start()
 
-        self.tray.start()
+        # 顺序很讲究：
+        #   1) 局域网端口与本地网页必须先起 —— tray.start() 会阻塞在
+        #      pystray 的 icon.run() 里，排在它後面就永远执行不到
+        #      （v2.0.6 到 v2.1.5 本地网页一直是「没开」，就是这个原因）
+        #   2) 托盘放最后，它阻塞住正好当主循环，进程才不会起来就退出
         self.lan.start()
         self.web.start()
+        self.tray.start()
 
     def wait_forever(self) -> None:
         while not self._stop.is_set():
