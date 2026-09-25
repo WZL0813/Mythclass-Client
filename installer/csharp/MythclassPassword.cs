@@ -31,9 +31,17 @@ namespace MythclassSetup
         {
             if (string.IsNullOrEmpty(password)) return Source.None;
 
-            var stored = FieldOf(ConfigPath, "adminPasswordHash");
-            if (!string.IsNullOrEmpty(stored) && VerifyPbkdf2Sha256(stored, password))
-                return Source.AdminPassword;
+            var data = ParseConfig();
+            if (data != null)
+            {
+                object hash;
+                if (data.TryGetValue("adminPasswordHash", out hash) && hash != null)
+                {
+                    var stored = Convert.ToString(hash);
+                    if (!string.IsNullOrEmpty(stored) && VerifyPbkdf2Sha256(stored, password))
+                        return Source.AdminPassword;
+                }
+            }
 
             if (File.Exists(UninstallPath) && VerifyOwnFormat(File.ReadAllText(UninstallPath), password))
                 return Source.InstallPassword;
@@ -41,21 +49,58 @@ namespace MythclassSetup
             return Source.None;
         }
 
-        /// <summary>本机的客户端 ID 和服务器地址（从 config.json 里读）</summary>
+        /// <summary>本机的客户端 ID 和服务器地址（从 config.json 里正经解析）</summary>
         public static void ReadIdentity(out string clientUid, out string serverUrl)
         {
-            clientUid = FieldOf(ConfigPath, "clientUid") ?? "";
+            clientUid = "";
             serverUrl = "";
 
+            var data = ParseConfig();
+            if (data == null) return;
+
+            object uid;
+            if (data.TryGetValue("clientUid", out uid) && uid != null)
+                clientUid = Convert.ToString(uid).Trim();
+
+            object servers;
+            if (!data.TryGetValue("servers", out servers)) return;
+            var list = servers as System.Collections.IEnumerable;
+            if (list == null || servers is string) return;
+
+            foreach (var item in list)
+            {
+                var entry = item as System.Collections.Generic.Dictionary<string, object>;
+                if (entry == null) continue;
+                object url;
+                if (!entry.TryGetValue("url", out url) || url == null) continue;
+                var text = Convert.ToString(url).Trim();
+                if (IsUsableUrl(text)) { serverUrl = text.TrimEnd('/'); return; }
+            }
+        }
+
+        /// <summary>服务器地址得是真能用的 http(s)，不然请求会报「无法识别该 URI 前缀」</summary>
+        public static bool IsUsableUrl(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return false;
+            Uri parsed;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out parsed)) return false;
+            return parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps;
+        }
+
+        /// <summary>用 .NET 自带的解析器读 config.json（手写解析踩过坑）</summary>
+        static System.Collections.Generic.Dictionary<string, object> ParseConfig()
+        {
             var text = ReadAll(ConfigPath);
-            if (text == null) return;
-            // servers 是个数组，取第一个 url
-            var at = text.IndexOf("\"url\"", StringComparison.Ordinal);
-            if (at < 0) return;
-            var start = text.IndexOf('"', text.IndexOf(':', at) + 1);
-            if (start < 0) return;
-            var end = text.IndexOf('"', start + 1);
-            if (end > start) serverUrl = text.Substring(start + 1, end - start - 1).Trim().TrimEnd('/');
+            if (string.IsNullOrEmpty(text)) return null;
+            try
+            {
+                var serializer = new System.Web.Script.Serialization.JavaScriptSerializer
+                {
+                    MaxJsonLength = 4 * 1024 * 1024,
+                };
+                return serializer.Deserialize<System.Collections.Generic.Dictionary<string, object>>(text);
+            }
+            catch { return null; }
         }
 
         /// <summary>把密码发给服务端验：必须是绑定了这台机器的老师账号</summary>
@@ -63,10 +108,24 @@ namespace MythclassSetup
             out string message)
         {
             message = "";
-            if (string.IsNullOrEmpty(serverUrl) || string.IsNullOrEmpty(clientUid) ||
-                string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
+            if (string.IsNullOrEmpty(password))
             {
-                message = "缺服务器地址或账号";
+                message = "没输密码";
+                return false;
+            }
+            if (string.IsNullOrEmpty(serverUrl) || string.IsNullOrEmpty(clientUid))
+            {
+                message = "读不出本机的服务器地址，只能用本机 Mythclass 管理密码";
+                return false;
+            }
+            if (string.IsNullOrEmpty(username))
+            {
+                message = "用教师账号验证的话，账号也要填";
+                return false;
+            }
+            if (!IsUsableUrl(serverUrl))
+            {
+                message = "配置里的服务器地址不合法：" + serverUrl;
                 return false;
             }
 

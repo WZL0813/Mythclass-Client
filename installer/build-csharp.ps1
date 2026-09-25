@@ -89,7 +89,9 @@ $refs = @(
   "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\System.Drawing.dll",
   "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\System.IO.Compression.dll",
   "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\System.IO.Compression.FileSystem.dll",
-  "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\Microsoft.CSharp.dll"
+  "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\Microsoft.CSharp.dll",
+  # JSON 解析用自带的 JavaScriptSerializer，别手写
+  "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\System.Web.Extensions.dll"
 ) | Where-Object { Test-Path $_ }
 $refArgs = $refs | ForEach-Object { "/r:`"$_`"" }
 $srcs = Get-ChildItem $CsDir -Filter *.cs | ForEach-Object { "`"$($_.FullName)`"" }

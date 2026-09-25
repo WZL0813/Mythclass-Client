@@ -170,7 +170,9 @@ namespace MythclassSetup
                             Program.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return 3;
                     }
-                    hint = "密码不对（" + message + "）。再试一次。\r\n\r\n" + hint;
+                    // 每轮都用固定文案，别再往旧提示前面接（会越叠越长）
+                    hint = "密码不对（" + message + "）。再试一次。\r\n\r\n" +
+                           "本机的管理密码可以直接用；也可以填教师账号 + 密码。";
                     given = null;
                 }
             }
