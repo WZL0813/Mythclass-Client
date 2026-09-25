@@ -279,7 +279,14 @@ PAGE = """<!doctype html>
       var(--ink);
     background-attachment: fixed;
   }
-  .wrap { max-width: 1500px; margin: 0 auto; padding: 14px 16px 40px; position: relative; z-index: 1; }
+  /* 控制台一开始藏着 —— 等星子聚成 Mythclass 之后再显出来 */
+  .wrap {
+    max-width: 1500px; margin: 0 auto; padding: 14px 16px 40px;
+    position: relative; z-index: 1;
+    opacity: 0; transform: translateY(10px);
+    transition: opacity 0.7s ease, transform 0.7s ease;
+  }
+  .wrap.shown { opacity: 1; transform: none; }
 
   /* 背后的星野：和教师端同一套（星子拼出 Mythclass，另一部分慢慢漂） */
   .star-backdrop {
@@ -605,8 +612,14 @@ const $ = (id) => document.getElementById(id);
   const SHAPE_COUNT = 700;
   const FREE_COUNT = 130;
   const SPEED = 0.3;
+  // 和教师端星幕一套时间轴：
+  //   先乱闪 850ms（正好接着开屏淡出）→ 汇聚 1750ms → 停 900ms → 控制台显现
+  const T_STARS = 850;
+  const T_GATHER = 1750;
+  const T_HOLD = 900;
+  const T_TOTAL = T_STARS + T_GATHER + T_HOLD;
 
-  let w = 0, h = 0, shape = [], free = [], startedAt = 0, lastAt = 0;
+  let w = 0, h = 0, shape = [], free = [], startedAt = 0, lastAt = 0, revealed = false;
 
   function measureTargets() {
     const off = document.createElement('canvas');
@@ -681,10 +694,10 @@ const $ = (id) => document.getElementById(id);
       ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2); ctx.fill();
     }
 
-    const gatherMs = 2200;
     for (const s of shape) {
       const span = 1 - s.delay || 1;
-      const local = Math.min(1, Math.max(0, t / gatherMs - s.delay) / span);
+      // 前 850ms 先乱闪，之后才开始往字上飞
+      const local = Math.min(1, Math.max(0, (t - T_STARS) / T_GATHER - s.delay) / span);
       const ease = 1 - Math.pow(1 - local, 3);
       const jitter = (1 - ease) * 5;
       const px = s.x + (s.tx - s.x) * ease + Math.sin(now / 130 + s.twinkle) * jitter;
@@ -697,6 +710,14 @@ const $ = (id) => document.getElementById(id);
 
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+
+    // 字聚好了、也停够了 —— 这时候把控制台显出来（星野继续留在背后）
+    if (!revealed && t >= T_TOTAL) {
+      revealed = true;
+      const wrap = document.querySelector('.wrap');
+      if (wrap) wrap.classList.add('shown');
+    }
+
     requestAnimationFrame(frame);
   }
 
@@ -710,7 +731,7 @@ const $ = (id) => document.getElementById(id);
 setTimeout(() => {
   const sp = document.getElementById('splash');
   if (sp) sp.classList.add('gone');
-}, 1200);
+}, 850);   // 和星子开始汇聚对齐：先淡开屏，星野浮现，然后星子聚成字
 const key = () => localStorage.getItem('mythkey') || '';
 const RAIL_KEY = 'myth.lan.rail';
 const EV_KEY = 'myth.lan.events';
