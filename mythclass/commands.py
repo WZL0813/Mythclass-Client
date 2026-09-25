@@ -95,8 +95,19 @@ def _notice_options(raw) -> list[dict]:
     return out
 
 
+def _int_or(value, fallback: int, low: int, high: int) -> int:
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return fallback
+    return max(low, min(number, high))
+
+
 def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, str]:
     """弹一条通知。
+
+    能自定义：窗口大小、标题/内容/按钮的字号、自适应最大、
+    置顶、全屏、最多三个回复选项。
 
     on_reply：学生回答后用这个回调把答案交出去（走 socket 的用）
     wait：等学生回答完再返回（局域网网页那种一问一答的用，最多等 120 秒）
@@ -106,6 +117,18 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
     topmost = bool(args.get("topmost", True))
     fullscreen = bool(args.get("fullscreen", False))
     options = _notice_options(args.get("options"))
+
+    size = args.get("size") or {}
+    win_w = _int_or(size.get("w"), 520, 320, 2400)
+    win_h = _int_or(size.get("h"), 300, 180, 1600)
+    auto_fit = bool(args.get("autoFit", False))
+
+    fonts = args.get("fontSize") or {}
+    font_title = _int_or(fonts.get("title"), 16, 9, 72)
+    font_body = _int_or(fonts.get("body"), 12, 8, 60)
+    font_button = _int_or(fonts.get("button"), 10, 8, 40)
+    # 按钮上的字比正文小一点：tk 的 Button 不好调内边距，靠字号拉开层次
+    button_size = max(font_button, 8)
 
     box: dict = {"answer": None}
     done = threading.Event() if wait else None
@@ -120,11 +143,19 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
         if fullscreen:
             root.attributes("-fullscreen", True)
         else:
-            w, h = 520, 300
+            screen_w, screen_h = root.winfo_screenwidth(), root.winfo_screenheight()
+            if auto_fit:
+                # 自适应：先让内容自己算出需要多大，再按屏幕留边
+                root.update_idletasks()
+                w = max(360, min(root.winfo_reqwidth() + 40, int(screen_w * 0.92)))
+                h = max(180, min(root.winfo_reqheight() + 30, int(screen_h * 0.92)))
+            else:
+                w, h = win_w, win_h
+            w = min(w, int(screen_w * 0.96))
+            h = min(h, int(screen_h * 0.96))
             root.geometry(
                 "%dx%d+%d+%d"
-                % (w, h, max(root.winfo_screenwidth() // 2 - w // 2, 0),
-                   max(root.winfo_screenheight() // 3, 0))
+                % (w, h, max(screen_w // 2 - w // 2, 0), max(screen_h // 3, 0))
             )
 
         frame = tk.Frame(root, bg="#f3efe3", padx=30, pady=26)
@@ -132,11 +163,12 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
 
         tk.Label(
             frame, text=title, bg="#f3efe3", fg="#2f4f3e",
-            font=("Microsoft YaHei", 16, "bold"), wraplength=440, justify="left",
+            font=("Microsoft YaHei", font_title, "bold"),
+            wraplength=max(300, win_w - 80), justify="left",
         ).pack(anchor="w")
         tk.Message(
             frame, text=body, bg="#f3efe3", fg="#10160f",
-            width=440, font=("Microsoft YaHei", 12),
+            width=max(280, win_w - 80), font=("Microsoft YaHei", font_body),
         ).pack(anchor="w", pady=(14, 18), fill="both", expand=True)
 
         def finish(answer: str) -> None:
@@ -159,7 +191,7 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
         for option in options:
             if option["kind"] == "input":
                 hint = option["label"]
-                entry = tk.Entry(bar, font=("Microsoft YaHei", 11), width=22, relief="flat",
+                entry = tk.Entry(bar, font=("Microsoft YaHei", button_size), width=20, relief="flat",
                                  bg="#ffffff", fg="#9aa79a")
                 entry.pack(side="left", padx=(0, 8), ipady=5)
                 # 提示文字做成真占位符：显示在输入框里，一聚焦就清掉
@@ -186,18 +218,19 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
                 entry.bind("<Return>", lambda _e, f=submit: f())
                 tk.Button(
                     bar, text=option.get("send") or "发送", relief="flat", padx=16, pady=4,
-                    bg="#e2ddcc", fg="#10160f", command=submit,
+                    bg="#e2ddcc", fg="#10160f", font=("Microsoft YaHei", button_size), command=submit,
                 ).pack(side="left", padx=(0, 8))
             elif option["kind"] == "primary":
                 tk.Button(
                     bar, text=option["label"], relief="flat", padx=20, pady=5,
                     bg="#2f4f3e", fg="#f3efe3", activebackground="#3f6b52", activeforeground="#ffffff",
+                    font=("Microsoft YaHei", button_size),
                     command=lambda o=option: finish(o["label"]),
                 ).pack(side="right", padx=(8, 0))
             else:
                 tk.Button(
                     bar, text=option["label"], relief="flat", padx=18, pady=5,
-                    bg="#e2ddcc", fg="#10160f",
+                    bg="#e2ddcc", fg="#10160f", font=("Microsoft YaHei", button_size),
                     command=lambda o=option: finish(o["label"]),
                 ).pack(side="right", padx=(8, 0))
 
