@@ -95,7 +95,8 @@ class AboutWindow:
 
         btns = tk.Frame(pad, bg=BG)
         btns.pack(fill="x", pady=(18, 0))
-        self._button(btns, "复制仓库地址", self._copy_repo).pack(side="left")
+        self._button(btns, "检查更新", lambda: run_update_check(self.cfg)).pack(side="left")
+        self._button(btns, "复制仓库地址", self._copy_repo).pack(side="left", padx=8)
         self._button(btns, "设置", lambda: self._open_settings()).pack(side="left", padx=8)
         self._button(btns, "关闭", self.root.destroy).pack(side="right")
 
@@ -196,6 +197,7 @@ class SettingsWindow:
 
         bar = tk.Frame(self.root, bg=BG)
         bar.pack(fill="x", padx=14, pady=(0, 14))
+        tk.Button(bar, text="检查更新", command=lambda: run_update_check(self.cfg), bg="#d8d2c2", fg=INK, relief="flat", padx=16, pady=6, cursor="hand2").pack(side="left")
         tk.Button(bar, text="保存", command=self._save, bg=MOSS, fg=BG, relief="flat", padx=20, pady=6, cursor="hand2").pack(side="right")
         tk.Button(bar, text="取消", command=self.root.destroy, bg="#d8d2c2", fg=INK, relief="flat", padx=16, pady=6, cursor="hand2").pack(side="right", padx=8)
 
@@ -218,6 +220,12 @@ class SettingsWindow:
 
         if config.needs_password_change(self.cfg):
             tk.Label(frame, text="现在还是默认密码 admin123，建议改掉。", bg=BG, fg=AMBER, font=("Microsoft YaHei", 9)).grid(row=4, column=1, sticky="w")
+
+        v["autoUpdate"] = tk.BooleanVar(value=bool(self.cfg.get("autoUpdate", True)))
+        tk.Checkbutton(
+            frame, variable=v["autoUpdate"], bg=BG, fg=INK, activebackground=BG,
+            text="自动更新（有新版就自己下载安装，默认开着）",
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(14, 2))
 
         v["complianceAccepted"] = tk.BooleanVar(value=bool(self.cfg.get("complianceAccepted")))
         tk.Checkbutton(
@@ -379,3 +387,77 @@ def open_settings_async(cfg: dict, client_uid: str, on_save) -> None:
             window.show()
 
     threading.Thread(target=run, name="mythclass-settings", daemon=True).start()
+
+def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
+    """检查更新。
+
+    silent=True 且没有新版时不弹窗（开机自动查用）
+    auto=True  有新版本时直接下载安装，不先问（自动更新用）
+    """
+    import threading
+
+    def work():
+        from . import updater
+
+        info = updater.check(cfg)
+
+        def ui_result(text, offer=None):
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            box = tk.Toplevel(root)
+            box.title("检查更新")
+            box.configure(bg=BG)
+            box.attributes("-topmost", True)
+            _center(box, 460, 300)
+            pad = tk.Frame(box, bg=BG, padx=22, pady=20)
+            pad.pack(fill="both", expand=True)
+            tk.Label(pad, text="检查更新", bg=BG, fg=MOSS, font=("Microsoft YaHei", 13, "bold")).pack(anchor="w")
+            tk.Message(pad, text=text, bg=BG, fg=INK, width=410, font=("Microsoft YaHei", 10)).pack(anchor="w", pady=(12, 16))
+            bar = tk.Frame(pad, bg=BG)
+            bar.pack(fill="x", side="bottom")
+            if offer:
+                tk.Button(bar, text="现在更新", command=lambda: (box.destroy(), root.destroy(), offer()),
+                          bg=MOSS, fg=BG, relief="flat", padx=16, pady=5, font=("Microsoft YaHei", 10),
+                          cursor="hand2").pack(side="right")
+            tk.Button(bar, text="关闭", command=lambda: (box.destroy(), root.destroy()),
+                      bg="#d8d2c2", fg=INK, relief="flat", padx=16, pady=5,
+                      font=("Microsoft YaHei", 10), cursor="hand2").pack(side="right", padx=8)
+            root.mainloop()
+
+        def do_install(info_dict):
+            from . import updater as up
+
+            def go():
+                text = "正在下载新版本…"
+                ui_result(text)
+
+            path = up.download(info_dict.get("url", ""), info_dict.get("sha256", ""))
+            if not path:
+                ui_result("下载失败了，可能是网络问题，等会儿再试。")
+                return
+            if up.run_installer(path):
+                ui_result("安装包已经起来了，客户端马上退出让位。装完会自动打开。")
+                up.restart_soon(1.5)
+            else:
+                ui_result(f"安装包下好了，放在：\n{path}\n但我起不来它（可能你点了取消 UAC）。手动双击也行。")
+
+        if info is None:
+            if not silent:
+                ui_result("一个服务端都没问通，检查一下网络或者服务端地址。")
+            return
+
+        if not info.get("update"):
+            if not silent:
+                ui_result(f"已经是最新的：v{info.get('current') or ''}")
+            return
+
+        notes = (info.get("notes") or "").strip() or "（作者没写说明）"
+        text = (f"有新版啦：v{info.get('current')} → v{info.get('latest')}\n\n"
+                f"{notes}")
+        if auto or info.get("mandatory"):
+            do_install(info)
+        else:
+            ui_result(text, offer=lambda: do_install(info))
+
+    threading.Thread(target=work, daemon=True).start()

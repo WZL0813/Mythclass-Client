@@ -134,6 +134,17 @@ class Tray:
     def _show_about(self) -> None:
         ui.open_about_async(self.app.cfg, self.app.client_uid, self._show_settings)
 
+    def _check_update(self) -> None:
+
+        """托盘里点「检查更新」"""
+
+        threading.Thread(
+
+            target=lambda: ui.run_update_check(self.app.cfg), daemon=True
+
+        ).start()
+
+
     def _show_settings(self) -> None:
         ui.open_settings_async(self.app.cfg, self.app.client_uid, self.app.on_settings_saved)
 
@@ -175,6 +186,7 @@ class Tray:
             MenuItem("关于", lambda: self._show_about(), default=True),
             MenuItem("设置", lambda: self._show_settings()),
             MenuItem("状态", lambda: self._show_status()),
+            MenuItem("检查更新", lambda: self._check_update()),
         MenuItem("重新连接", lambda: self._reconnect()),
             Menu.SEPARATOR,
             MenuItem("退出", lambda: self._quit()),

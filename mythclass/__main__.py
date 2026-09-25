@@ -511,6 +511,35 @@ class MythclassClient:
 
     # ------------------------------ 生命周期 ------------------------------
 
+    def _auto_update_loop(self) -> None:
+        """开机自动检查更新：默认开着，6 小时最多查一次。
+
+        先等 25 秒，别跟启动抢时间；查到有新版本就下下来、提权装上、自己退出。
+        """
+        import time as _time
+
+        _time.sleep(25)
+        try:
+            if not self.cfg.get("autoUpdate", True):
+                return
+            from datetime import datetime, timedelta
+
+            last = str(self.cfg.get("lastUpdateCheck") or "")
+            if last:
+                try:
+                    if datetime.fromisoformat(last) > datetime.now() - timedelta(hours=6):
+                        return
+                except Exception:
+                    pass
+            from . import ui
+
+            # cfg 是个 dict，要存档得走 config.save
+            self.cfg["lastUpdateCheck"] = datetime.now().isoformat(timespec="seconds")
+            config.save(self.cfg)
+            ui.run_update_check(self.cfg, silent=True, auto=True)
+        except Exception as err:
+            self.log(f"自动检查更新失败：{err}", logging.WARNING)
+
     def start(self) -> None:
         self.log(f"{__product__} v{__version__} 启动，机器号 {self.client_uid}")
 
@@ -553,6 +582,9 @@ class MythclassClient:
         #      pystray 的 icon.run() 里，排在它後面就永远执行不到
         #      （v2.0.6 到 v2.1.5 本地网页一直是「没开」，就是这个原因）
         #   2) 托盘放最后，它阻塞住正好当主循环，进程才不会起来就退出
+        # 自动检查更新：后台慢慢来，不挡启动
+        threading.Thread(target=self._auto_update_loop, daemon=True).start()
+
         self.lan.start()
         self.web.start()
         self.tray.start()

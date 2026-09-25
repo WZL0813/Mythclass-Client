@@ -43,6 +43,9 @@ DEFAULTS = {
     "complianceAccepted": False,
     "teacherIp": "",
     "watchDirs": [],
+    # 自动更新：默认开着，有新版自己下自己装
+    "autoUpdate": True,
+    "lastUpdateCheck": "",
     "maxLogCount": 5000,
     "maxLogSize": 209715200,
     "screenFps": 12,
