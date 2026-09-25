@@ -66,6 +66,19 @@ class MythclassClient:
             port=int(self.cfg.get("lanWebPort") or lanweb.DEFAULT_PORT),
         )
         self.web.frame_error = lambda: self.lan_frame_error
+        # 局域网页面要看的：文件修改记录、设置（只读）
+        self.web.file_logs = lambda limit=200: self.store.recent_file_logs(limit)
+        self.web.settings_view = lambda: {
+            "name": self.cfg.get("clientName") or "教室一体机",
+            "clientUid": self.client_uid,
+            "version": __version__,
+            "servers": [s.get("url") for s in (self.cfg.get("servers") or []) if isinstance(s, dict)],
+            "watchDirs": list(self.cfg.get("watchDirs") or []),
+            "screenFps": self.cfg.get("screenFps", 12),
+            "screenQuality": self.cfg.get("screenQuality", 60),
+            "autoUpdate": bool(self.cfg.get("autoUpdate", True)),
+            "localIps": identity.local_ips(),
+        }
         self.lan = lanport.LanPort(
             trust=trust,
             on_command=self._run_command_sync,

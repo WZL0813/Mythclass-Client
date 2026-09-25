@@ -145,6 +145,19 @@ class LanWeb:
                     self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
                     return
 
+                if path in ("/api/file-logs", "/api/logs"):
+                    getter = getattr(outer, "file_logs", None)
+                    rows = getter(200) if callable(getter) else []
+                    self._json(200, {"items": rows})
+                    return
+
+                if path == "/api/settings":
+                    """这台机器的设置（只读）"""
+                    getter = getattr(outer, "settings_view", None)
+                    data = getter() if callable(getter) else {}
+                    self._json(200, data)
+                    return
+
                 if path == "/api/info":
                     info = outer.on_info() or {}
                     info["clientIp"] = self._ip()
@@ -358,6 +371,30 @@ PAGE = """<!doctype html>
   .kv span { word-break: break-all; }
   ul { margin: 0; padding-left: 16px; color: var(--dim); font-size: 13px; }
 
+  /* 标签栏（和教师端一套） */
+  .tabs { display: flex; gap: 4px; padding: 0 4px; margin: 12px 0 10px; border-bottom: 1px solid var(--line); }
+  .tab {
+    display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px;
+    border: 0; border-bottom: 2px solid transparent; background: transparent;
+    color: var(--dim); font: inherit; font-size: 13.5px; cursor: pointer;
+  }
+  .tab svg { width: 15px; height: 15px; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--moss); }
+  .pane { display: none; }
+  .pane.on { display: block; }
+  table.logs { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.logs th { text-align: left; color: var(--sage); font-weight: 400; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  table.logs td { padding: 7px 8px; border-bottom: 1px dashed rgba(143,168,142,.14); word-break: break-all; }
+  table.logs tr:hover td { background: rgba(243,239,227,.03); }
+  .cmd-row { display: flex; gap: 8px; margin-bottom: 12px; }
+  .cmd-row input { flex: 1; }
+  pre.out {
+    margin: 0; padding: 12px; border-radius: 9px; border: 1px solid var(--line);
+    background: #0b0f0c; color: #cfe0cc; font-size: 12.5px; white-space: pre-wrap;
+    word-break: break-all; max-height: 46vh; overflow: auto;
+  }
+
   /* 屏幕区 */
   .screen-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
   .btn {
@@ -552,8 +589,28 @@ PAGE = """<!doctype html>
         <ul id="owners"><li>—</li></ul>
       </aside>
 
-      <!-- 中：屏幕 -->
+      <!-- 中：标签页（屏幕 / 文件记录 / 命令 / 设置） -->
       <section class="card">
+        <nav class="tabs" id="tabs">
+          <button class="tab active" data-pane="screen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8"/></svg>
+            屏幕
+          </button>
+          <button class="tab" data-pane="logs">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 5h11l5 5v9H4z"/><path d="M8 12h8M8 15h5"/></svg>
+            文件记录
+          </button>
+          <button class="tab" data-pane="cmd">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 7l5 5-5 5"/><path d="M13 17h6"/></svg>
+            命令
+          </button>
+          <button class="tab" data-pane="settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+            设置
+          </button>
+        </nav>
+
+        <div class="pane on" id="pane-screen">
         <div class="screen-head">
           <button class="btn primary" id="watchBtn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 5v14l11-7z"/></svg>
@@ -574,6 +631,41 @@ PAGE = """<!doctype html>
         </div>
         <img id="screen" alt="这台机器的屏幕">
         <div class="empty" id="hint">点「开始看」拉画面。</div>
+        </div><!-- /屏幕 -->
+
+        <div class="pane" id="pane-logs">
+          <div class="screen-head">
+            <button class="btn" id="logsRefresh">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 11-3-6.2M20 4v5h-5"/></svg>
+              刷新
+            </button>
+            <div class="stats"><span id="logsCount">—</span></div>
+          </div>
+          <table class="logs">
+            <thead><tr><th style="width:150px">时间</th><th style="width:90px">动作</th><th>文件</th><th style="width:80px">大小</th></tr></thead>
+            <tbody id="logsBody"><tr><td colspan="4" class="muted">点「刷新」拉一下。</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="pane" id="pane-cmd">
+          <div class="cmd-row">
+            <input class="nt-input" id="cmdInput" placeholder="输入命令，比如 status / screenshot，回车执行">
+            <button class="btn primary" id="cmdRun">执行</button>
+          </div>
+          <div class="row" style="margin-bottom:12px">
+            <button class="btn" data-preset="status">status</button>
+            <button class="btn" data-preset="screenshot">screenshot</button>
+            <button class="btn" data-preset="lock">lock</button>
+          </div>
+          <pre class="out" id="cmdOut">还没执行过命令。</pre>
+        </div>
+
+        <div class="pane" id="pane-settings">
+          <div class="kv" id="setKv"></div>
+          <p class="muted tiny" style="margin-top:14px">
+            这里是这台机器的设置，看得到、改不了 —— 要改去机器上开客户端改。
+          </p>
+        </div>
       </section>
 
       <!-- 右：事件 -->
@@ -612,12 +704,11 @@ const $ = (id) => document.getElementById(id);
   const SHAPE_COUNT = 700;
   const FREE_COUNT = 130;
   const SPEED = 0.3;
-  // 反过来：先把 Mythclass 亮出来，再散成一团星，然后控制台显现
-  //   t=850 开屏淡完（字已经在后面等着）→ 字亮 1100ms → 散开 1500ms
-  const T_SPLASH = 850;
-  const T_WORD = 1100;
-  const T_SCATTER = 1500;
-  const T_TOTAL = T_SPLASH + T_WORD + T_SCATTER + 150;
+  // 星子先乱闪，再飞过去聚成 Mythclass，然后控制台显现
+  const T_STARS = 850;
+  const T_GATHER = 1750;
+  const T_HOLD = 900;
+  const T_TOTAL = T_STARS + T_GATHER + T_HOLD;
 
   let w = 0, h = 0, shape = [], free = [], startedAt = 0, lastAt = 0, revealed = false;
 
@@ -694,33 +785,18 @@ const $ = (id) => document.getElementById(id);
       ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2); ctx.fill();
     }
 
-    // ease = 1 表示贴在字上，= 0 表示已经散回自己该待的地方
-    let ease = 1;
-    if (t > T_SPLASH + T_WORD) {
-      const p = Math.min(1, (t - T_SPLASH - T_WORD) / T_SCATTER);
-      ease = 1 - p * p * (3 - 2 * p); // 平滑一点，别像弹簧
-    }
-    // 字刚亮起来那一下给个渐显，别硬蹦出来
-    const rising = Math.min(1, Math.max(0, (t - (T_SPLASH - 250)) / 350));
-
     for (const s of shape) {
-      // 散开时每个星子慢半拍，看着才像"散"不像"炸"
-      const spread = Math.max(0, Math.min(1, ease * 1.0 + s.delay * (1 - ease) * 0.9));
-      // 散开之后还要往外飘一点，别原地不动
-      const away = (1 - ease) * (1 - ease) * (40 + s.delay * 120);
-      const jitter = ease * 1.6;
-      const px = s.x + (s.tx - s.x) * ease + Math.sin(now / 130 + s.twinkle) * jitter
-                 - Math.sin(s.twinkle) * away;
-      const py = s.y + (s.ty - s.y) * ease + Math.cos(now / 150 + s.twinkle) * jitter
-                 - Math.cos(s.twinkle) * away * 0.7;
-
+      const span = 1 - s.delay || 1;
+      // 前 850ms 先乱闪，之后往字上飞
+      const local = Math.min(1, Math.max(0, (t - T_STARS) / T_GATHER - s.delay) / span);
+      const ease = 1 - Math.pow(1 - local, 3);
+      const jitter = (1 - ease) * 5;
+      const px = s.x + (s.tx - s.x) * ease + Math.sin(now / 130 + s.twinkle) * jitter;
+      const py = s.y + (s.ty - s.y) * ease + Math.cos(now / 150 + s.twinkle) * jitter;
       const breathe = 0.3 + 0.16 * Math.sin(now / 700 + s.twinkle);
-      // 贴字上时亮，散开时越来越淡，最后融进本来就漂着的那群
-      const lit = 0.35 + 0.65 * ease;
-      ctx.globalAlpha = Math.max(0, Math.min(1, breathe * lit * rising));
+      ctx.globalAlpha = Math.max(0, Math.min(1, breathe * (0.35 + 0.65 * ease)));
       ctx.fillStyle = s.color;
       ctx.beginPath(); ctx.arc(px, py, Math.max(0.2, s.size), 0, Math.PI * 2); ctx.fill();
-      void spread;
     }
 
     ctx.globalAlpha = 1;
@@ -746,7 +822,7 @@ const $ = (id) => document.getElementById(id);
 setTimeout(() => {
   const sp = document.getElementById('splash');
   if (sp) sp.classList.add('gone');
-}, 850);   // 开屏淡出的同时，后面那个 Mythclass 正好亮起来
+}, 850);   // 和星子开始汇聚对齐：先淡开屏，星野浮现，然后星子聚成字
 const key = () => localStorage.getItem('mythkey') || '';
 const RAIL_KEY = 'myth.lan.rail';
 const EV_KEY = 'myth.lan.events';
@@ -782,6 +858,71 @@ function renderEvents() {
 }
 $('tabEvent').onclick = () => { evTab = 'event'; $('tabEvent').classList.add('active'); $('tabMessage').classList.remove('active'); renderEvents(); };
 $('tabMessage').onclick = () => { evTab = 'message'; $('tabMessage').classList.add('active'); $('tabEvent').classList.remove('active'); renderEvents(); };
+
+// 标签页
+const panes = ['screen', 'logs', 'cmd', 'settings'];
+function showPane(name) {
+  panes.forEach((p) => {
+    const btn = document.querySelector(`.tab[data-pane="${p}"]`);
+    const pane = document.getElementById('pane-' + p);
+    if (btn) btn.classList.toggle('active', p === name);
+    if (pane) pane.classList.toggle('on', p === name);
+  });
+  if (name === 'logs') loadLogs();
+  if (name === 'settings') loadSettings();
+}
+document.querySelectorAll('.tab').forEach((b) => {
+  b.onclick = () => showPane(b.dataset.pane);
+});
+
+async function loadLogs() {
+  const body = document.getElementById('logsBody');
+  const { data } = await api('/api/file-logs?limit=200');
+  const items = (data && data.items) || [];
+  document.getElementById('logsCount').textContent = items.length ? `${items.length} 条（最多留 7 天）` : '还没有记录';
+  body.innerHTML = items.length
+    ? items.map((r) => `<tr><td class="mono">${(r.time || '').slice(5, 19)}</td><td>${r.operation || ''}</td><td>${r.path || ''}</td><td>${r.size || 0}</td></tr>`).join('')
+    : '<tr><td colspan="4" class="muted">这台机器最近没改什么文件。</td></tr>';
+}
+
+async function loadSettings() {
+  const { data } = await api('/api/settings');
+  if (!data) return;
+  const rows = [
+    ['名称', data.name || '—'],
+    ['机器 ID', data.clientUid || '—'],
+    ['版本', 'v' + (data.version || '?')],
+    ['内网地址', (data.localIps || []).join('、') || '—'],
+    ['服务端', (data.servers || []).join('、') || '—'],
+    ['监视目录', (data.watchDirs || []).join('、') || '（没设）'],
+    ['画面帧率', data.screenFps + ' 帧/秒'],
+    ['画面质量', data.screenQuality + '%'],
+    ['自动更新', data.autoUpdate ? '开着' : '关着'],
+  ];
+  document.getElementById('setKv').innerHTML = rows.map(([k, v]) => `<b>${k}</b><span>${v}</span>`).join('');
+}
+
+async function runCmd(value) {
+  const cmd = (value !== undefined ? value : document.getElementById('cmdInput').value).trim();
+  if (!cmd) return;
+  const out = document.getElementById('cmdOut');
+  out.textContent = '执行中…';
+  const { data } = await api('/api/command', { command: cmd, args: {} });
+  const okFlag = data && data.ok;
+  out.textContent = (data && (data.output || data.message)) || '没回话';
+  logEvent(`命令 ${cmd}：${okFlag ? '成功' : '失败'}`, !okFlag);
+}
+document.getElementById('cmdRun').onclick = () => runCmd();
+document.getElementById('cmdInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') runCmd();
+});
+document.querySelectorAll('[data-preset]').forEach((b) => {
+  b.onclick = () => {
+    document.getElementById('cmdInput').value = b.dataset.preset;
+    runCmd(b.dataset.preset);
+  };
+});
+document.getElementById('logsRefresh').onclick = loadLogs;
 
 // 伸缩
 function applyFolds() {
