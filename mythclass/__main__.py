@@ -19,7 +19,7 @@ from .api import ServerApi, SocketClient
 from .commands import execute, known_commands
 from .db import RecordStore
 from .monitors import AudioMonitor, FileMonitor, ScreenStreamer
-from . import crash, lanport, netban, trust
+from . import bindings, crash, lanport, lanweb, netban, trust
 from .tray import Tray, make_icon_image
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -50,6 +50,15 @@ class MythclassClient:
         self.p2p = None            # 惰性创建：老师要直连才起 asyncio 线程
         self._last_thumb = 0.0     # 上次抓缩略图的时间，用来限流
         # 局域网直连：老师端在同一个网段时可以直接连这个端口，不走服务器
+        # 本地网页：老师在同一局域网时直接打开浏览器就能控制，不经服务器
+        self.web = lanweb.LanWeb(
+            trust=trust,
+            on_command=self._run_command_sync,
+            on_info=self._lan_info,
+            on_frame=self._lan_frame,
+            log=lambda m: self.log(m),
+            port=int(self.cfg.get("lanWebPort") or lanweb.DEFAULT_PORT),
+        )
         self.lan = lanport.LanPort(
             trust=trust,
             on_command=self._run_command_sync,
@@ -79,6 +88,7 @@ class MythclassClient:
                     info = api.register(
                         self.client_uid, self.cfg.get("clientName") or "教室一体机", identity.local_ips()
                     )
+                    self.refresh_bindings()
                     if abs(api.clock_skew) > 120:
                         self.log(
                             f"本机时间与服务端差了 {int(api.clock_skew)} 秒，"
@@ -157,6 +167,59 @@ class MythclassClient:
             self.log(f"收到不认识的事件：{event}", logging.DEBUG)
 
     # ------------------------------ 局域网直连 ------------------------------
+
+    # ------------------------------ 本地网页 ------------------------------
+
+    def refresh_bindings(self) -> None:
+        """拉一次「这台机器绑定了哪些老师」，存起来给本地网页显示"""
+        try:
+            data = self.api.teachers()
+        except Exception as err:
+            self.log(f"拉绑定老师失败：{err}", logging.WARNING)
+            return
+        if not data:
+            return
+        bindings.save(data)
+        names = bindings.names()
+        if names:
+            self.log(f"本机绑定的老师：{'、'.join(names)}")
+
+    def _lan_info(self) -> dict:
+        """本地网页要的信息。绑定列表旧了就顺手刷新一次"""
+        if bindings.is_stale() and self.api.token:
+            self.refresh_bindings()
+        data = bindings.load()
+        return {
+            "name": self.cfg.get("clientName") or "教室一体机",
+            "clientUid": self.client_uid,
+            "version": __version__,
+            "teachers": data.get("teachers") or [],
+            "localIps": identity.local_ips(),
+            "screenAlive": self.screen.alive(),
+        }
+
+    def _lan_frame(self) -> bytes | None:
+        """本地网页要一帧画面。按需抓，抓完就完（不依赖屏幕流开着）"""
+        try:
+            import io
+
+            from PIL import Image
+
+            from . import monitors
+
+            shot = monitors.grab_thumbnail(max_width=1280, quality=60)
+            if not shot:
+                return None
+            if isinstance(shot, bytes):
+                return shot
+            buf = io.BytesIO()
+            if isinstance(shot, Image.Image):
+                shot.convert("RGB").save(buf, format="JPEG", quality=60)
+                return buf.getvalue()
+            return None
+        except Exception as err:
+            self.log(f"本地网页抓画面失败：{err}", logging.WARNING)
+            return None
 
     def _note_teacher(self, sender: dict) -> None:
         """老师连过来一次就记一笔。IP 由服务端带下来（隧道后面只有它看得见）"""
@@ -399,6 +462,7 @@ class MythclassClient:
 
         self.tray.start()
         self.lan.start()
+        self.web.start()
 
     def wait_forever(self) -> None:
         while not self._stop.is_set():
@@ -414,6 +478,7 @@ class MythclassClient:
         if self.p2p is not None:
             self.p2p.close()
         self.lan.stop()
+        self.web.stop()
         if self.socket:
             self.socket.stop()
         if self.file_monitor:
@@ -481,6 +546,8 @@ class MythclassClient:
             f"屏幕流：{'推着呢' if self.screen.alive() else '关着'}\n"
             f"托盘图标：{self.icon_check()}\n"
             f"局域网端口：{self.lan.status()}\n"
+            f"本地网页：{self.web.status()}\n"
+            f"绑定老师：{bindings.describe()}\n"
             f"信任的教师端：{trust.describe()}\n"
             f"证书库：{self.tls_check()}\n"
             f"连接层：{self.socket.last_error if self.socket and self.socket.last_error else '没有报错'}\n"

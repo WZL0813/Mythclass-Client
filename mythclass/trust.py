@@ -86,6 +86,22 @@ def check(ip: str, key: str) -> bool:
     return secrets.compare_digest(saved, key.strip())
 
 
+def check_any(key: str) -> bool:
+    """这张密钥是不是任何一台被信任的机器发的
+
+    老师换台电脑（IP 变了）也能用同一张密钥 —— 这是密钥存在的意义。
+    光按 IP 判的话，密钥就白存了。
+    """
+    key = (key or "").strip()
+    if not key:
+        return False
+    for entry in _load().values():
+        saved = entry.get("key") or ""
+        if saved and secrets.compare_digest(saved, key):
+            return True
+    return False
+
+
 def trusted_count() -> int:
     return len([1 for e in _load().values() if e.get("key")])
 

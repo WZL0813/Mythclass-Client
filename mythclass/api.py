@@ -104,6 +104,21 @@ class ServerApi:
                 self.clock_skew = 0.0
         return data
 
+    def teachers(self) -> dict | None:
+        """拉这台机器绑定的老师（本地网页要显示归属）"""
+        try:
+            res = requests.get(
+                f"{self.base}/api/client/teachers",
+                headers=self._headers(),
+                timeout=DEFAULT_TIMEOUT,
+            )
+            if res.status_code != 200:
+                return None
+            data = res.json()
+            return data if isinstance(data, dict) else None
+        except requests.RequestException:
+            return None
+
     def heartbeat(self, local_ips: list[str] | None = None) -> bool:
         try:
             resp = self.session.post(
