@@ -496,6 +496,18 @@ PAGE = """<!doctype html>
         <input type="checkbox" id="ntFit"><span>自适应窗口最大（把文字按比例拉到屏幕能放的最大）</span>
       </label>
 
+      <p class="nt-label">回复方式</p>
+      <label class="nt-row">
+        <input type="checkbox" id="ntAuto"><span>纯弹出，不用回复（到点自己关闭）</span>
+      </label>
+      <label class="nt-mini hidden" id="ntAutoRow" style="margin-top:8px;max-width:180px">
+        倒计时秒数（最多 3600）
+        <input class="nt-input" type="number" id="ntAutoSec" value="30" min="5" max="3600">
+      </label>
+      <p class="muted tiny hidden" id="ntAutoTip" style="font-size:12.5px">
+        勾了它，下面三个回复选项就自动取消了。
+      </p>
+
       <p class="nt-label">回复选项（最多三个，勾上才显示）</p>
       <div class="nt-opt">
         <label class="nt-row"><input type="checkbox" id="ntOn0" checked><span class="nt-slot">高亮按钮</span></label>
@@ -705,7 +717,6 @@ const EV_KEY = 'myth.lan.events';
 
 const TOOLS = [
   ['lock', '锁屏', 'M7 10V8a5 5 0 0110 0v2M5 10h14v10H5z'],
-  ['unlock', '解锁', 'M7 10V8a5 5 0 019-3M5 10h14v10H5z'],
   ['message', '弹消息', 'M4 5h16v11H8l-4 4z'],
   ['screenshot', '截图', 'M4 8h3l2-2h6l2 2h3v11H4zM12 16a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z'],
   ['net_ban', '禁止上网', 'M12 3a9 9 0 100 18 9 9 0 000-18zM6 6l12 12'],
@@ -852,6 +863,7 @@ function noticeArgs() {
     topmost: $('ntTop').checked,
     fullscreen: $('ntFull').checked,
     autoFit: $('ntFit').checked,
+    autoClose: $('ntAuto').checked ? (Number($('ntAutoSec').value) || 0) : 0,
     size: { w: num('ntW', 520), h: num('ntH', 300) },
     fontSize: { title: num('ntFT', 16), body: num('ntFB', 12), button: num('ntFBtn', 10) },
     options: opts,
@@ -868,6 +880,20 @@ async function sendNotice() {
   const out = (data && (data.output || data.message)) || '没回话';
   logEvent(out, !(data && data.ok));
   $('hint').textContent = out;
+}
+
+// 勾选互斥：纯弹出关掉三个选项；勾选项关掉纯弹出
+function syncAuto() {
+  const on = $('ntAuto').checked;
+  $('ntAutoRow').classList.toggle('hidden', !on);
+  $('ntAutoTip').classList.toggle('hidden', !on);
+  if (on) for (let i = 0; i < 3; i++) $('ntOn' + i).checked = false;
+}
+$('ntAuto').onchange = syncAuto;
+for (let i = 0; i < 3; i++) {
+  $('ntOn' + i).addEventListener('change', () => {
+    if ($('ntOn' + i).checked) { $('ntAuto').checked = false; syncAuto(); }
+  });
 }
 
 $('ntCancel').onclick = closeNotice;

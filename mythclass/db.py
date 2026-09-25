@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import config
@@ -56,7 +56,39 @@ class RecordStore:
 
     # ------------------------------ 文件记录 ------------------------------
 
-    def add_file_log(self, operation: str, file_path: str, file_size: int = 0) -> None:
+    # 文件修改日志自动清理：默认留 7 天、最多 5000 条（主人要求）
+    FILE_LOG_KEEP_DAYS = 7
+    FILE_LOG_KEEP_ROWS = 5000
+
+    def prune_file_logs(self, days: int | None = None, max_rows: int | None = None) -> int:
+        """删掉太老/太多的文件修改日志，返回删了几条"""
+        days = self.FILE_LOG_KEEP_DAYS if days is None else days
+        max_rows = self.FILE_LOG_KEEP_ROWS if max_rows is None else max_rows
+        # 跟 now_str() 一个格式，字符串比较才靠得住
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        removed = 0
+        try:
+            with self._lock:
+                cur = self._conn.execute("DELETE FROM file_logs WHERE timestamp < ?", (cutoff,))
+                removed += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+                cur = self._conn.execute(
+                    "DELETE FROM file_logs WHERE id NOT IN "
+                    "(SELECT id FROM file_logs ORDER BY id DESC LIMIT ?)",
+                    (max_rows,),
+                )
+                removed += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+                self._conn.commit()
+        except Exception as err:  # 清理失败不该影响正常记录，但得留下痕迹
+            self._prune_error = f"{type(err).__name__}: {err}"
+        return removed
+
+    def add_file_log(
+        self, operation: str, file_path: str, file_size: int = 0
+    ) -> None:
+        # 顺手清一清太老的日志（每 50 次写一次就够，别每次查）
+        self._fl_writes = getattr(self, "_fl_writes", 0) + 1
+        if self._fl_writes % 50 == 1:
+            self.prune_file_logs()
         with self._lock:
             self._conn.execute(
                 "INSERT INTO file_logs (timestamp, operation, file_path, file_size) VALUES (?, ?, ?, ?)",

@@ -137,6 +137,16 @@ class Tray:
     def _show_settings(self) -> None:
         ui.open_settings_async(self.app.cfg, self.app.client_uid, self.app.on_settings_saved)
 
+    def _quit(self) -> None:
+
+
+        """直接退出（主人要求：不问密码了）"""
+
+
+        threading.Thread(target=self.app.shutdown, daemon=True).start()
+
+
+
     def _confirm_exit(self) -> None:
         def run():
             root = tk.Tk()
@@ -167,7 +177,7 @@ class Tray:
             MenuItem("状态", lambda: self._show_status()),
         MenuItem("重新连接", lambda: self._reconnect()),
             Menu.SEPARATOR,
-            MenuItem("退出（要密码）", lambda: self._confirm_exit()),
+            MenuItem("退出", lambda: self._quit()),
         )
         self.icon = pystray.Icon("mythclass", image, __product__, menu)
         self.app.log("托盘起来了。")

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import tkinter as tk
 import urllib.request
 from pathlib import Path
@@ -126,6 +127,9 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
     fullscreen = bool(args.get("fullscreen", False))
     options = _notice_options(args.get("options"))
 
+    # 纯弹出、不需要回复：到点自己关（主人要的倒计时通知），最长 3600 秒
+    auto_close = _int_or(args.get("autoClose"), 0, 0, 3600)
+
     size = args.get("size") or {}
     win_w = _int_or(size.get("w"), 520, 320, 2400)
     win_h = _int_or(size.get("h"), 300, 180, 1600)
@@ -181,6 +185,16 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
             title_label.configure(wraplength=wrap)
             body_label.configure(width=wrap)
             root.update_idletasks()
+
+        # 倒计时：显示还剩几秒，到点自己关
+        countdown_label = None
+        if auto_close > 0:
+            countdown_label = tk.Label(
+                bar, text="", bg="#f3efe3", fg="#6f8a70",
+                font=("Microsoft YaHei", max(9, base_button)),
+            )
+            countdown_label.pack(side="left", padx=(0, 10))
+            sized.append((countdown_label, base_button))
 
         def finish(answer: str) -> None:
             box["answer"] = answer
@@ -248,9 +262,15 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
                 sized.append((btn, base_button))
 
         if not options:
-            btn = tk.Button(bar, text="知道了", relief="flat", padx=20, pady=5,
-                            bg="#2f4f3e", fg="#f3efe3", font=("Microsoft YaHei", base_button),
-                            command=lambda: finish("知道了"))
+            # 纯弹出、不用回复：给个「关闭」就行，回传也别写成「回答」
+            if auto_close > 0:
+                btn = tk.Button(bar, text="关闭", relief="flat", padx=20, pady=5,
+                                bg="#2f4f3e", fg="#f3efe3", font=("Microsoft YaHei", base_button),
+                                command=lambda: finish("（关掉了）"))
+            else:
+                btn = tk.Button(bar, text="知道了", relief="flat", padx=20, pady=5,
+                                bg="#2f4f3e", fg="#f3efe3", font=("Microsoft YaHei", base_button),
+                                command=lambda: finish("知道了"))
             btn.pack(side="right")
             sized.append((btn, base_button))
 
@@ -292,6 +312,22 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
                 "%dx%d+%d+%d"
                 % (w, h, max(screen_w // 2 - w // 2, 0), max(screen_h // 3, 0))
             )
+
+        if auto_close > 0 and countdown_label is not None:
+            deadline = time.time() + auto_close
+
+            def tick() -> None:
+                left = int(round(deadline - time.time()))
+                if left <= 0:
+                    finish("（时间到，自己关了）")
+                    return
+                try:
+                    countdown_label.configure(text=f"{left} 秒后自动关闭")
+                    root.after(500, tick)
+                except Exception:
+                    pass
+
+            tick()
 
         root.mainloop()
 
