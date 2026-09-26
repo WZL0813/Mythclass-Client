@@ -23,6 +23,9 @@ from . import __version__
 
 TAG = "检查更新"
 
+# 最近一次失败的原因（界面上要说清楚，别只说"网络问题"）
+LAST_ERROR: list = [""]
+
 
 def parse_version(text: str) -> list[int] | None:
     """把 2.6.0 / v2.6.0 拆成数字，认不出来返回 None"""
@@ -93,6 +96,20 @@ def check(cfg, timeout: float = 12.0) -> dict | None:
     return None
 
 
+def _ssl_context():
+    """用项目自带的证书库（api.py 里那份），别让 https 卡在证书上"""
+    try:
+        from .api import ca_bundle
+        import ssl
+
+        bundle = ca_bundle()
+        if bundle:
+            return ssl.create_default_context(cafile=bundle)
+    except Exception:
+        pass
+    return None
+
+
 def download(url: str, sha256: str = "", on_progress=None, timeout: float = 600.0) -> Path | None:
     """下载安装包到临时目录，顺手校验 sha256。失败返回 None"""
     name = url.split("/")[-1].split("?")[0] or "MythclassSetup.exe"
@@ -102,7 +119,7 @@ def download(url: str, sha256: str = "", on_progress=None, timeout: float = 600.
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": f"MythclassClient/{__version__}"})
-        with urllib.request.urlopen(req, timeout=timeout) as res:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as res:
             total = int(res.headers.get("Content-Length") or 0)
             done = 0
             digest = hashlib.sha256()
@@ -116,7 +133,8 @@ def download(url: str, sha256: str = "", on_progress=None, timeout: float = 600.
                     done += len(chunk)
                     if on_progress and total:
                         on_progress(done, total)
-    except Exception:
+    except Exception as err:
+        LAST_ERROR[:] = [f"{type(err).__name__}: {err}"]
         return None
 
     if sha256:
@@ -126,7 +144,9 @@ def download(url: str, sha256: str = "", on_progress=None, timeout: float = 600.
                 dest.unlink()
             except Exception:
                 pass
+            LAST_ERROR[:] = [f"下载下来的文件 sha256 对不上（要 {sha256[:12]}…，实际 {actual[:12]}…）"]
             return None
+    LAST_ERROR[:] = [""]
     return dest
 
 

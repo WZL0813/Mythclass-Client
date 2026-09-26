@@ -283,6 +283,12 @@ class LanWeb:
                         self._json(401, {"ok": False, "error": "KEY_REJECTED", "message": "密钥不对"})
                     return
 
+                if path == "/api/windows/force":
+                    handler = getattr(outer, "force_close_window", None)
+                    ok2, msg = handler(int(payload.get("hwnd") or 0)) if callable(handler) else (False, "不支持")
+                    self._json(200 if ok2 else 400, {"ok": ok2, "message": msg})
+                    return
+
                 if path == "/api/windows/close":
                     handler = getattr(outer, "close_window", None)
                     ok2, msg = handler(int(payload.get("hwnd") or 0)) if callable(handler) else (False, "不支持")
@@ -490,6 +496,15 @@ PAGE = """<!doctype html>
   .crumb.on { color: var(--text); background: rgba(94, 154, 115, 0.14); border-color: rgba(94, 154, 115, 0.4); }
   .crumbs .sep { color: #4d5c50; }
 
+  .hand-bar {
+    display: flex; align-items: center; gap: 10px; margin: 12px 0 0;
+    padding: 11px 14px; border-radius: 12px;
+    border: 1px solid rgba(232, 183, 120, 0.5);
+    background: rgba(232, 183, 120, 0.12); color: #f0d9b5; font-size: 13.5px;
+  }
+  .hb-dot { width: 9px; height: 9px; border-radius: 50%; background: #e8b778; box-shadow: 0 0 8px #e8b778; }
+  .hand-bar button { margin-left: auto; }
+
   /* 屏幕区 */
   .screen-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
   .btn {
@@ -674,6 +689,12 @@ PAGE = """<!doctype html>
   <div id="console" class="hidden">
     <!-- 工具条 -->
     <div class="tools" id="tools"></div>
+
+    <div class="hand-bar hidden" id="handBar">
+      <span class="hb-dot"></span>
+      <span id="handText">这台机器举手了</span>
+      <button class="btn" id="handClear">知道了，放下</button>
+    </div>
 
     <div class="grid" id="grid">
       <!-- 左：机器信息 -->
@@ -1173,8 +1194,16 @@ async function loadWindows() {
   document.getElementById('winCount').textContent = items.length ? `${items.length} 个窗口` : '没有窗口';
   const body = document.getElementById('winBody');
   body.innerHTML = items.length
-    ? items.map((w) => `<tr><td>${w.app || '—'}</td><td>${w.title}${w.active ? ' · 当前' : ''}</td><td class="muted">${w.stateText || ''}</td><td><button class="btn" data-close="${w.hwnd}">关掉</button></td></tr>`).join('')
+    ? items.map((w) => `<tr><td>${w.app || '—'}</td><td>${w.title}${w.active ? ' · 当前' : ''}</td><td class="muted">${w.stateText || ''}</td><td><button class="btn" data-close="${w.hwnd}">关掉</button> <button class="btn" data-force="${w.hwnd}">强制关</button></td></tr>`).join('')
     : '<tr><td colspan="4" class="muted">没看到有标题的窗口。</td></tr>';
+  body.querySelectorAll('[data-force]').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm('强制关会直接结束那个程序，没保存的东西会丢。继续？')) return;
+      const { data: res } = await api('/api/windows/force', { hwnd: Number(b.dataset.force) });
+      logEvent((res && res.message) || '强制关过了', !(res && res.ok));
+      loadWindows();
+    };
+  });
   body.querySelectorAll('[data-close]').forEach((b) => {
     b.onclick = async () => {
       if (!confirm('确定关掉这个窗口？')) return;
@@ -1225,6 +1254,32 @@ document.getElementById('diskUp').onclick = async () => {
   // 盘根没有上一级 —— 那就回「此电脑」
   loadDisk(data && data.parent ? data.parent : '');
 };
+
+// 举手：每 5 秒问一次（学生在黑屏里点举手，这边就能看到）
+let handOn = false;
+async function pollHand() {
+  try {
+    const { data } = await api('/api/quiet');
+    const on = !!(data && data.hand);
+    const bar = document.getElementById('handBar');
+    if (on !== handOn) {
+      handOn = on;
+      logEvent(on ? '这台机器举手了' : '放下了手', false);
+    }
+    bar.classList.toggle('hidden', !on);
+    if (on) {
+      const at = data.handAt ? new Date(data.handAt * 1000).toLocaleTimeString().slice(0, 8) : '';
+      document.getElementById('handText').textContent = `这台机器举手了${at ? '（' + at + '）' : ''}`;
+    }
+  } catch (_) {
+    /* 问不到就算了 */
+  }
+}
+document.getElementById('handClear').onclick = async () => {
+  await api('/api/hand', { on: false });
+  pollHand();
+};
+setInterval(pollHand, 5000);
 
 // 伸缩
 function applyFolds() {

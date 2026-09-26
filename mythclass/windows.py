@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 
 STATE_TEXT = {
     "min": "最小化",
@@ -63,6 +64,43 @@ def foreground_app() -> tuple[str, str]:
         return ("", "")
 
 
+def _window_state(hwnd: int, width: int, height: int, screen_w: int, screen_h: int) -> str:
+    """这个窗口是什么状态。
+
+    ⚠️ win32gui.IsZoomed 在有些 pywin32 版本里没有 —— 一旦用它判断，
+    异常会被上层吞掉，整行窗口就消失了（前台窗口看不见就是这么来的）。
+    这里先用 GetWindowPlacement（showCmd：1 正常 / 2 最小化 / 3 最大化），
+    再用 IsIconic 兜底，最后才靠尺寸猜全屏。每步各自兜底。
+    """
+    try:
+        import win32gui
+
+        placement = win32gui.GetWindowPlacement(hwnd)
+        show = placement[1] if len(placement) > 1 else 0
+        if show == 2:
+            return "min"
+        if show == 3:
+            return "max"
+        if show == 1 and screen_w and screen_h and width >= screen_w and height >= screen_h:
+            return "full"
+        if show == 1:
+            return "normal"
+    except Exception:
+        pass
+
+    try:
+        import win32gui
+
+        if win32gui.IsIconic(hwnd):
+            return "min"
+    except Exception:
+        pass
+
+    if screen_w and screen_h and width >= screen_w and height >= screen_h:
+        return "full"
+    return "normal"
+
+
 def list_windows() -> list[dict]:
     """所有「有标题、看得见」的窗口，按前台优先排前面"""
     try:
@@ -93,21 +131,14 @@ def list_windows() -> list[dict]:
                 return True
 
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
-            if win32gui.IsIconic(hwnd):
-                state = "min"
-            elif win32gui.IsZoomed(hwnd):
-                state = "max"
-            elif screen_w and screen_h and width >= screen_w and height >= screen_h:
-                # 铺满整块屏幕又不是最大化 —— 那就是全屏（游戏、播放器常见）
-                state = "full"
-            else:
-                state = "normal"
+            # 状态判断单独兜底：某个 API 不在也不该丢掉这一行
+            state = _window_state(hwnd, width, height, screen_w, screen_h)
 
             items.append(
                 {
                     "hwnd": int(hwnd),
                     "title": title,
-                    "app": _proc_name(pid),
+                    "app": _proc_name(pid) or (f"pid {pid}" if pid else "未知程序"),
                     "pid": int(pid or 0),
                     "state": state,
                     "stateText": STATE_TEXT.get(state, state),
@@ -126,6 +157,34 @@ def list_windows() -> list[dict]:
 
     items.sort(key=lambda w: (not w["active"], w["state"] != "normal", w["app"].lower(), w["title"]))
     return items
+
+
+def force_close_window(hwnd: int) -> tuple[bool, str]:
+    """强制关：WM_CLOSE 不理的（前台程序、全屏游戏常见），直接结束它的进程
+
+    会丢未保存的东西，所以界面上要确认一下再用。
+    """
+    try:
+        import psutil
+        import win32gui
+        import win32process
+
+        handle = int(hwnd)
+        if not handle or not win32gui.IsWindow(handle):
+            return False, "这个窗口已经不在了"
+        title = win32gui.GetWindowText(handle) or "（没标题）"
+        _, pid = win32process.GetWindowThreadProcessId(handle)
+        if not pid:
+            return False, "问不到这是哪个进程"
+        if pid == os.getpid():
+            return False, "这是客户端自己，不关"
+
+        proc = psutil.Process(int(pid))
+        name = proc.name()
+        proc.kill()
+        return True, f"已经强制结束了：{name}（{title}）"
+    except Exception as err:
+        return False, f"强制关失败：{type(err).__name__}: {err}"
 
 
 def close_window(hwnd: int) -> tuple[bool, str]:

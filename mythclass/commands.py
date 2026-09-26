@@ -463,6 +463,13 @@ def cmd_list_windows(args: dict) -> tuple[bool, str]:
     return True, json.dumps({"items": windows_mod.list_windows()}, ensure_ascii=False)
 
 
+def cmd_force_close_window(args: dict) -> tuple[bool, str]:
+    """强制关掉一个窗口的进程"""
+    from . import windows as windows_mod
+
+    return windows_mod.force_close_window(int(args.get("hwnd") or 0))
+
+
 def cmd_close_window(args: dict) -> tuple[bool, str]:
     """关掉指定的窗口"""
     from . import windows as windows_mod

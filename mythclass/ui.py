@@ -434,7 +434,8 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
 
             path = up.download(info_dict.get("url", ""), info_dict.get("sha256", ""))
             if not path:
-                ui_result("下载失败了，可能是网络问题，等会儿再试。")
+                why = (up.LAST_ERROR[0] if getattr(up, "LAST_ERROR", None) else "") or "不知道原因"
+                ui_result("下载没成功：\n" + why + "\n\n下载地址：\n" + (info_dict.get("url") or "（服务端没给地址）"))
                 return
             if up.run_installer(path):
                 ui_result("安装包已经起来了，客户端马上退出让位。装完会自动打开。")

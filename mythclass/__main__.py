@@ -117,6 +117,7 @@ class MythclassClient:
             return quiet.status()
 
         self.web.close_window = _close_window
+        self.web.force_close_window = windows.force_close_window
         self.web.dir_listing = _dir_listing
         self.web.read_file = _read_file
         self.web.set_quiet = _set_quiet
@@ -342,11 +343,20 @@ class MythclassClient:
             return False
 
     def _report_hand(self, what: str) -> None:
-        """学生在黑屏里举手 / 放下，报给老师"""
+        """学生在黑屏里举手 / 放下，报给老师（带状态，两端好显示）"""
         try:
+            import json as _json
+
+            from . import quiet as quiet_mod
+
             self.log(f"黑屏安静：{what}")
+            state = quiet_mod.status()
+            payload = _json.dumps(
+                {"hand": state.get("hand"), "at": state.get("handAt"), "text": what},
+                ensure_ascii=False,
+            )
             if self.api:
-                self.api.command_result("", "hand", True, what)
+                self.api.command_result("", "hand", True, payload)
         except Exception:
             pass
 
