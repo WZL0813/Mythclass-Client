@@ -16,6 +16,7 @@ import threading
 import time
 
 from . import __product__, __version__, config, guard, identity
+from . import updater as updater_mod
 from .api import ServerApi, SocketClient
 from .commands import execute, known_commands
 from .db import RecordStore

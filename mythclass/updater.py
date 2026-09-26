@@ -407,12 +407,13 @@ def run_installer(path: Path) -> bool:
     return False
 
 
-def schedule_relaunch(delay: float = 45.0) -> None:
-    """兜底：过一会儿把客户端再拉起来一次。
+def schedule_relaunch(delay: float = 45.0, wait_pid: int = 0) -> None:
+    """过一会儿把客户端再拉起来一次。
 
-    正常情况安装器自己会拉（去掉 --nolaunch 之后）。
-    万一它没拉（比如用户点了取消、或者安装器版本老），
-    这个小助手会在 delay 秒后补一次 —— 已经在跑就不重复拉。
+    - 装更新时当兜底：安装器自己会拉，万一没拉，这里补一次
+    - 重启客户端时用它：wait_pid 填自己的 pid，等自己真退出了再拉，
+      这样不会跟"单实例锁"打架
+    写成一个独立的小脚本再跑，比把代码拼成字符串可靠得多。
     """
     import subprocess
     import sys
@@ -425,20 +426,32 @@ def schedule_relaunch(delay: float = 45.0) -> None:
         cand = exe.parent / "MythclassClient.exe"
         target = [str(cand)] if cand.exists() else [str(exe), "-m", "mythclass"]
 
-    script = (
-        "import subprocess, sys, time\n"
-        f"time.sleep({delay!r})\n"
-        "import ctypes\n"
-        "u = ctypes.windll.user32\n"
-        "h = u.FindWindowW(None, 'Mythclass')\n"
-        "if h:\n"
-        "    sys.exit(0)\n"
-        f"subprocess.Popen({target!r}, close_fds=True)\n"
-    )
+    lines = [
+        "import os, subprocess, sys, time",
+        f"time.sleep({float(delay)!r})",
+    ]
+    if wait_pid:
+        lines += [
+            f"pid = {int(wait_pid)}",
+            "for _ in range(120):",
+            "    try:",
+            "        os.kill(pid, 0)",
+            "    except Exception:",
+            "        break",
+            "    time.sleep(0.5)",
+        ]
+    lines.append(f"subprocess.Popen({target!r}, close_fds=True)")
+    script = "\n".join(lines) + "\n"
+
     try:
-        subprocess.Popen([str(exe), "-c", script], close_fds=True)
+        helper = update_dir() / "relaunch.py"
+        helper.write_text(script, encoding="utf-8")
+        subprocess.Popen([str(exe), str(helper)], close_fds=True)
     except Exception:
-        pass
+        try:
+            subprocess.Popen([str(exe), "-c", script], close_fds=True)
+        except Exception:
+            pass
 
 
 def restart_soon(delay: float = 1.0) -> None:

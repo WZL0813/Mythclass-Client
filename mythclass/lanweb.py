@@ -562,6 +562,15 @@ PAGE = """<!doctype html>
   .crumb.on { color: var(--text); background: rgba(94, 154, 115, 0.14); border-color: rgba(94, 154, 115, 0.4); }
   .crumbs .sep { color: #4d5c50; }
 
+  .warn-bar {
+    display: flex; align-items: center; gap: 10px; margin: 12px 0 0;
+    padding: 11px 14px; border-radius: 12px;
+    border: 1px solid rgba(230, 120, 110, 0.5);
+    background: rgba(230, 120, 110, 0.14); color: #f3d0cb; font-size: 13.5px;
+  }
+  .wb-dot { width: 9px; height: 9px; border-radius: 50%; background: #e6786e; box-shadow: 0 0 8px #e6786e; }
+  .warn-bar button { margin-left: auto; }
+
   .hand-bar {
     display: flex; align-items: center; gap: 10px; margin: 12px 0 0;
     padding: 11px 14px; border-radius: 12px;
@@ -781,6 +790,12 @@ PAGE = """<!doctype html>
   <div id="console" class="hidden">
     <!-- 工具条 -->
     <div class="tools" id="tools"></div>
+
+    <div class="warn-bar hidden" id="warnBar">
+      <span class="wb-dot"></span>
+      <span id="warnText"></span>
+      <button class="btn" id="warnClose">知道了</button>
+    </div>
 
     <div class="hand-bar hidden" id="handBar">
       <span class="hb-dot"></span>
@@ -1128,6 +1143,8 @@ const TOOLS = [
   ['screenshot', '截图', 'M4 8h3l2-2h6l2 2h3v11H4zM12 16a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z'],
   ['net_ban', '禁止上网', 'M12 3a9 9 0 100 18 9 9 0 000-18zM6 6l12 12'],
   ['net_allow', '放开上网', 'M12 3a9 9 0 100 18 9 9 0 000-18zM8 12.5l3 3 5-6'],
+  ['restart_client', '重启客户端', 'M4 12a8 8 0 018-8 8 8 0 018 8M4 12v5h5M20 12v-5h-5'],
+  ['elevate_self', '提权重启', 'M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7z'],
   ['reboot', '重启', 'M20 12a8 8 0 11-3-6.2M20 4v5h-5'],
   ['shutdown', '关机', 'M12 3v9M7.5 6.5a7 7 0 109 0'],
 ];
@@ -1290,6 +1307,8 @@ async function loadSettings() {
     ['屏幕帧率', d.screenFps],
     ['画面质量', d.screenQuality],
     ['自动更新', d.autoUpdate ? '开' : '关'],
+    ['管理员权限', d.isAdmin ? '有（能改防火墙、关机）'
+      : '没有 —— 点工具条上的「提权重启」，机器前的人点一下「是」就行'],
   ];
   document.getElementById('setKv').innerHTML = rows
     .map(([k, v]) => `<span>${k}</span><b>${v == null ? '' : v}</b>`)
@@ -1475,6 +1494,10 @@ async function pollHand() {
     /* 问不到就算了 */
   }
 }
+document.getElementById('warnClose').onclick = () => {
+  document.getElementById('warnBar').classList.add('hidden');
+};
+
 document.getElementById('handClear').onclick = async () => {
   await api('/api/hand', { on: false });
   pollHand();
@@ -1569,6 +1592,23 @@ $('tools').innerHTML = TOOLS.map(([cmd, label, p], i) =>
 document.querySelectorAll('[data-tool]').forEach((b) => {
   b.onclick = () => {
     const [cmd, label, , extra] = TOOLS[Number(b.dataset.tool)];
+
+    if (cmd === 'elevate_self') {
+      // 注意：换行要用 \\n 转义，别写成真换行 —— PAGE 是 Python 字符串，
+      // 真换行会把 JS 字符串劈开，整个脚本 SyntaxError
+      const lines = [
+        '以管理员身份重新启动客户端？',
+        '机器前面的人需要在弹出的窗口里点「是」。',
+        '提权之后「禁止上网」这类功能才能真正生效。',
+      ];
+      if (!confirm(lines.join(String.fromCharCode(10)))) return;
+      return send(cmd);
+    }
+
+    if (cmd === 'restart_client') {
+      if (!confirm('重启客户端（不是重启电脑）？')) return;
+      return send(cmd);
+    }
 
     // 重启两次确认、关机三次确认（主人要求）
     if (cmd === 'reboot') {
@@ -1711,6 +1751,12 @@ async function send(command, override) {
   const out = (data && (data.output || data.message)) || '没回话';
   const label = (TOOLS.find((t) => t[0] === command) || [, command])[1];
   logEvent(label + '：' + out, !(data && data.ok));
+  // 失败要说在明面上：光在事件里滚过去，老师会以为「按了没用」
+  if (data && data.ok === false) {
+    const bar = document.getElementById('warnBar');
+    document.getElementById('warnText').textContent = label + '没成功：' + out;
+    if (bar) bar.classList.remove('hidden');
+  }
   if (command === 'screenshot') grabOnce();
 }
 

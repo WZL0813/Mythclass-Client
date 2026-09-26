@@ -619,6 +619,76 @@ def cmd_screen_broadcast(args: dict) -> tuple[bool, str]:
     return True, "广播已经开起来"
 
 
+def cmd_elevate_self(args: dict) -> tuple[bool, str]:
+    """以管理员身份重新启动客户端（弹一次 UAC）。
+
+    禁止上网/关机这类要管理员权限。教室里平时是普通权限跑的，
+    机器前有人的时候点一下这个，提权之后那些功能就能用了。
+    """
+    import os
+    import sys
+    import threading
+    import time
+
+    if safe_mode():
+        return False, "测试模式下不提权重启"
+    if os.name != "nt":
+        return False, "只有 Windows 需要"
+    if is_admin():
+        return True, "现在已经是管理员身份了，不用再提权"
+
+    import ctypes
+
+    exe = sys.executable
+    if exe.lower().endswith("pythonw.exe") or exe.lower().endswith("python.exe"):
+        args_line = "-m mythclass"
+    else:
+        args_line = ""
+
+    def go() -> None:
+        time.sleep(0.5)  # 让回执先发出去
+        try:
+            result = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args_line, None, 1)
+            if int(result) <= 32:
+                return
+            # 提权那一个起来了，自己退出让位（单实例锁在它那边会接管）
+            time.sleep(2.0)
+            os._exit(0)
+        except Exception:
+            pass
+
+    threading.Thread(target=go, daemon=True).start()
+    return True, "正在以管理员身份重启，请在弹出来的窗口里点「是」"
+
+
+def cmd_restart_client(args: dict) -> tuple[bool, str]:
+    """重启客户端本身（托盘那个），不是重启电脑。
+
+    先安排一个"等这个进程退出再把我拉起来"的小助手，
+    然后自己退出 —— 有守护进程的话它会更快拉起来。
+    """
+    import os
+    import threading
+    import time
+
+    if safe_mode():
+        return False, "测试模式下不重启客户端"
+
+    try:
+        from . import updater
+
+        updater.schedule_relaunch(5, wait_pid=os.getpid())
+    except Exception as err:
+        return False, f"安排重启失败：{type(err).__name__}: {err}"
+
+    def die_later() -> None:
+        time.sleep(2)  # 让这条回执先发出去
+        os._exit(0)
+
+    threading.Thread(target=die_later, daemon=True).start()
+    return True, "客户端正在重启，几秒后自己回来"
+
+
 def cmd_net_allow(args: dict) -> tuple[bool, str]:
     """放开上网（局域网那个按钮发的就是这个名字）"""
     if safe_mode():
@@ -672,6 +742,8 @@ REGISTRY = {
     "screen_broadcast": cmd_screen_broadcast,
     "net_ban": cmd_net_ban,
     "net_allow": cmd_net_allow,
+    "restart_client": cmd_restart_client,
+    "elevate_self": cmd_elevate_self,
     "net_ban_lift": cmd_net_allow,
     "screenshot": cmd_screenshot,
     "usage_stats": cmd_usage_stats,
