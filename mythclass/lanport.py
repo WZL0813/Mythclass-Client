@@ -62,7 +62,23 @@ class LanPort:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(("0.0.0.0", self.port))
+            # 同上层：端口可能被系统保留，往后找 300 个
+            bound = False
+            last_err = None
+            for offset in range(0, 300):
+                want = int(self.port) + offset
+                try:
+                    sock.bind(("0.0.0.0", want))
+                    if offset:
+                        self.log(f"局域网直连端口 {self.port} 用不了，改用 {want}")
+                    self.port = want
+                    bound = True
+                    break
+                except OSError as err:
+                    last_err = err
+                    continue
+            if not bound:
+                raise OSError(f"直连端口 20 个都绑不上：{last_err}")
             sock.listen(8)
             sock.settimeout(1.0)
         except OSError as err:

@@ -48,6 +48,8 @@ class LanWeb:
         self.running = False
         self.hits = 0
         self._httpd: ThreadingHTTPServer | None = None
+        # 退让时要避开的端口（直连端口占着的那个）
+        self.avoid_port = 0
         self._thread: threading.Thread | None = None
 
     # ------------------------------ 生命周期 ------------------------------
@@ -216,6 +218,11 @@ class LanWeb:
                     self.wfile.write(data)
                     return
 
+                if path == "/api/sounds":
+                    getter = getattr(outer, "sound_list", None)
+                    self._json(200, {"items": getter() if callable(getter) else []})
+                    return
+
                 if path == "/api/quiet":
                     getter = getattr(outer, "quiet_state", None)
                     self._json(200, getter() if callable(getter) else {})
@@ -271,6 +278,9 @@ class LanWeb:
                     payload = json.loads(raw.decode("utf-8"))
                 except ValueError:
                     payload = {}
+                    # 原始字节留着 —— 上传音频这种事要的就是它
+                    # （rfile 已经被读完了，再读一次会一直等下去）
+                    self._raw_body = raw
 
                 if path == "/api/auth":
                     key = str(payload.get("key") or "").strip()
@@ -287,6 +297,21 @@ class LanWeb:
                     handler = getattr(outer, "force_close_window", None)
                     ok2, msg = handler(int(payload.get("hwnd") or 0)) if callable(handler) else (False, "不支持")
                     self._json(200 if ok2 else 400, {"ok": ok2, "message": msg})
+                    return
+
+                if path == "/api/sounds/test":
+                    handler = getattr(outer, "play_sound", None)
+                    ok2, msg = handler(str(payload.get("sound") or "")) if callable(handler) else (False, "不支持")
+                    self._json(200 if ok2 else 400, {"ok": ok2, "message": msg})
+                    return
+
+                if path == "/api/sounds":
+                    query = parse_qs(urlparse(self.path).query)
+                    name = (query.get("name") or [""])[0]
+                    blob = getattr(self, "_raw_body", b"") or b""
+                    handler = getattr(outer, "save_sound", None)
+                    data = handler(name, blob) if callable(handler) else {"ok": False}
+                    self._json(200 if data.get("ok") else 400, data)
                     return
 
                 if path == "/api/windows/close":
@@ -328,7 +353,25 @@ class LanWeb:
                 self._json(404, {"error": "NOT_FOUND"})
 
         try:
-            httpd = ThreadingHTTPServer(("0.0.0.0", self.port), Handler)
+            # 端口可能被系统成段保留（Hyper-V/WSL/Docker 会动态占），
+            # 那就往后找 300 个能用的 —— 不然整个局域网功能会静默失效
+            httpd = None
+            last_err = None
+            for offset in range(0, 300):
+                want = int(self.port) + offset
+                if want == int(getattr(self, 'avoid_port', 0) or 0):
+                    continue  # 直连端口占了，跳过去
+                try:
+                    httpd = ThreadingHTTPServer(("0.0.0.0", want), Handler)
+                    if offset:
+                        self.log(f"本地网页端口 {self.port} 用不了，改用 {want}")
+                    self.port = want
+                    break
+                except OSError as err:
+                    last_err = err
+                    continue
+            if httpd is None:
+                raise OSError(f"本地网页 300 个端口都绑不上：{last_err}")
             httpd.daemon_threads = True
         except OSError as err:
             self.log(f"本地网页端口 {self.port} 开不起来（{err}），跳过。")
@@ -649,6 +692,17 @@ PAGE = """<!doctype html>
       <label class="nt-row" style="margin-top:8px">
         <input type="checkbox" id="ntFit"><span>自适应窗口最大（把文字按比例拉到屏幕能放的最大）</span>
       </label>
+
+      <p class="nt-label">铃声</p>
+      <div class="cmd-row">
+        <select class="nt-input" id="ntSound" style="flex:1">
+          <option value="">用默认铃声</option>
+        </select>
+        <button class="btn" id="ntSoundTest">试听</button>
+        <label class="btn" style="cursor:pointer">
+          上传<input type="file" id="ntSoundFile" accept="audio/*" style="display:none">
+        </label>
+      </div>
 
       <p class="nt-label">回复方式</p>
       <label class="nt-row">
@@ -1405,10 +1459,44 @@ async function askQuiet(text) {
 /** 打开「发通知」对话框（局域网这边也能自定义，不再用浏览器自带的 prompt） */
 function openNotice() {
   $('ntMask').classList.remove('hidden');
+  loadSounds($('ntSound'));
 }
+
+$('ntSoundTest').onclick = async () => {
+  const { data } = await api('/api/sounds/test', { sound: $('ntSound').value || '' });
+  logEvent(`试听：${(data && data.message) || '发了'}`, !(data && data.ok));
+};
+$('ntSoundFile').addEventListener('change', async (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  if (await uploadSound(f)) {
+    await loadSounds($('ntSound'));
+    $('ntSound').value = '';
+  }
+  e.target.value = '';
+});
 
 function closeNotice() {
   $('ntMask').classList.add('hidden');
+}
+
+async function loadSounds(select) {
+  const { data } = await api('/api/sounds');
+  const items = (data && data.items) || [];
+  const opts = ['<option value="">用默认铃声</option>']
+    .concat(items.filter((x) => !x.builtin).map((x) => `<option value="${x.path}">${x.name}</option>`));
+  select.innerHTML = opts.join('');
+}
+
+async function uploadSound(file) {
+  const res = await fetch('/api/sounds?name=' + encodeURIComponent(file.name), {
+    method: 'POST',
+    headers: { 'X-Mythclass-Key': key(), 'Content-Type': 'application/octet-stream' },
+    body: file,
+  });
+  const data = await res.json().catch(() => ({}));
+  logEvent(`上传铃声：${data.message || (res.ok ? '好了' : '失败')}`, !res.ok);
+  return res.ok;
 }
 
 function noticeArgs() {
@@ -1430,6 +1518,7 @@ function noticeArgs() {
     fullscreen: $('ntFull').checked,
     autoFit: $('ntFit').checked,
     autoClose: $('ntAuto').checked ? (Number($('ntAutoSec').value) || 0) : 0,
+    sound: $('ntSound').value || '',
     size: { w: num('ntW', 520), h: num('ntH', 300) },
     fontSize: { title: num('ntFT', 16), body: num('ntFB', 12), button: num('ntFBtn', 10) },
     options: opts,

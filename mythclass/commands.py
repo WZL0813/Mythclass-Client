@@ -148,6 +148,9 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
     # 纯弹出、不需要回复：到点自己关（主人要的倒计时通知），最长 3600 秒
     auto_close = _int_or(args.get("autoClose"), 0, 0, 3600)
 
+    # 铃声：默认用主人指定那个；也可以给路径、给上传的 data URL
+    sound_spec = str(args.get("sound") or "")
+
     size = args.get("size") or {}
     win_w = _int_or(size.get("w"), 520, 320, 2400)
     win_h = _int_or(size.get("h"), 300, 180, 1600)
@@ -162,6 +165,14 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
     done = threading.Event() if wait else None
 
     def show() -> None:
+        # 先把铃声响起来（异步，不挡窗口）
+        try:
+            from . import sounds as sounds_mod
+
+            sounds_mod.play(sound_spec)
+        except Exception:
+            pass
+
         root = tk.Tk()
         # 窗口标题固定，不跟着内容变（主人要求）
         root.title(NOTICE_TITLE)

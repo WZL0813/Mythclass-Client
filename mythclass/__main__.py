@@ -122,6 +122,39 @@ class MythclassClient:
         self.web.read_file = _read_file
         self.web.set_quiet = _set_quiet
         self.web.set_hand = _set_hand
+
+        # 铃声：列出来、存下来、试听
+        def _sound_list():
+            from . import sounds as sounds_mod
+
+            return sounds_mod.list_saved()
+
+        def _save_sound(name: str, blob: bytes):
+            import os.path as _osp
+
+            from . import sounds as sounds_mod
+
+            if not blob or len(blob) > 8 * 1024 * 1024:
+                return {"ok": False, "message": "文件不对或者太大（上限 8MB）"}
+            # 只取文件名，别想用 ../ 跑出去
+            safe = _osp.basename(str(name or "notice.wav")).replace("\\", "") or "notice.wav"
+            if not safe.lower().endswith(sounds_mod.KNOWN_EXT):
+                safe += ".wav"
+            try:
+                dest = sounds_mod.sounds_dir() / safe
+                dest.write_bytes(blob)
+                return {"ok": True, "message": f"传好了：{safe}", "path": str(dest)}
+            except Exception as err:
+                return {"ok": False, "message": f"存不下：{err}"}
+
+        def _play_sound(spec: str):
+            from . import sounds as sounds_mod
+
+            return sounds_mod.play(spec)
+
+        self.web.sound_list = _sound_list
+        self.web.save_sound = _save_sound
+        self.web.play_sound = _play_sound
         self.web.settings_view = lambda: {
             "name": self.cfg.get("clientName") or "教室一体机",
             "clientUid": self.client_uid,
@@ -132,6 +165,8 @@ class MythclassClient:
             "screenQuality": self.cfg.get("screenQuality", 60),
             "autoUpdate": bool(self.cfg.get("autoUpdate", True)),
             "localIps": identity.local_ips(),
+            "lanPort": int(getattr(self.lan, "port", 0) or 0),
+            "lanWebPort": int(getattr(self.web, "port", 0) or 0),
         }
         self.lan = lanport.LanPort(
             trust=trust,
@@ -715,6 +750,8 @@ class MythclassClient:
         threading.Thread(target=self._auto_update_loop, daemon=True).start()
 
         self.lan.start()
+        # 直连端口要是被系统占着换了，网页那边别跟着挑到同一个
+        self.web.avoid_port = int(getattr(self.lan, 'port', 0) or 0)
         self.web.start()
         self.tray.start()
 
