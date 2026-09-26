@@ -76,7 +76,7 @@ class ServerApi:
 
     def register(
         self, client_uid: str, name: str, local_ips: list[str] | None = None,
-        lan_key: str = "",
+        lan_key: str = "", lan_port: int = 0, lan_web_port: int = 0,
     ) -> dict:
         resp = self.session.post(
             f"{self.base}/api/client/register",
@@ -88,6 +88,9 @@ class ServerApi:
                 "localIps": local_ips or [],
                 # 本机局域网密钥：教师端拼带密钥的直连链接要用
                 "lanKey": lan_key or "",
+                # 实际在用的局域网端口（系统占用时会自己换，教师端拼地址要用）
+                "lanPort": int(lan_port or 0),
+                "lanWebPort": int(lan_web_port or 0),
             },
             headers=self._headers(),
             timeout=DEFAULT_TIMEOUT,
@@ -124,11 +127,19 @@ class ServerApi:
         except requests.RequestException:
             return None
 
-    def heartbeat(self, local_ips: list[str] | None = None, lan_key: str = "") -> bool:
+    def heartbeat(
+        self, local_ips: list[str] | None = None, lan_key: str = "",
+        lan_port: int = 0, lan_web_port: int = 0,
+    ) -> bool:
         try:
             resp = self.session.post(
                 f"{self.base}/api/client/heartbeat",
-                json={"localIps": local_ips or [], "lanKey": lan_key},
+                json={
+                    "localIps": local_ips or [],
+                    "lanKey": lan_key,
+                    "lanPort": int(lan_port or 0),
+                    "lanWebPort": int(lan_web_port or 0),
+                },
                 headers=self._headers(),
                 timeout=DEFAULT_TIMEOUT,
             )
@@ -213,6 +224,8 @@ class SocketClient:
 
         self._ws: websocket.WebSocket | None = None
         self._stop = threading.Event()
+        # 心跳时顺便报一下实际端口（由外层设成可调用对象）
+        self.ports_provider = None
         # 手动重连用：叫醒退避等待，不用干等最多 60 秒
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -335,7 +348,10 @@ class SocketClient:
         while not self._stop.is_set():
             # 发心跳事件（每 20 秒）
             if time.time() - last_heartbeat > 20:
-                self.emit("heartbeat")
+                self.emit(
+                    "heartbeat",
+                    self.ports_provider() if callable(self.ports_provider) else None,
+                )
                 last_heartbeat = time.time()
 
             # 把攒着的帧发出去

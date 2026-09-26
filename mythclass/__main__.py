@@ -199,6 +199,10 @@ class MythclassClient:
                         self.cfg.get("clientName") or "教室一体机",
                         identity.local_ips(),
                         trust.own_key(),
+                        # 注册可能早于 lan/web 建好 —— 那就先报默认端口，
+                        # 心跳会带上真实端口（被系统占用时换过的那个）
+                        lan_port=self._used_lan_port(),
+                        lan_web_port=self._used_web_port(),
                     )
                     self.refresh_bindings()
                     if abs(api.clock_skew) > 120:
@@ -376,6 +380,24 @@ class MythclassClient:
             return True
         except Exception:
             return False
+
+    def _used_lan_port(self) -> int:
+        """实际在用的直连端口（没起来就报默认值）"""
+        try:
+            from . import lanport as _lp
+
+            return int(getattr(self.lan, "port", 0) or 0) or int(_lp.DEFAULT_PORT)
+        except Exception:
+            return 0
+
+    def _used_web_port(self) -> int:
+        """实际在用的本地网页端口"""
+        try:
+            from . import lanweb as _lw
+
+            return int(getattr(self.web, "port", 0) or 0) or int(_lw.DEFAULT_PORT)
+        except Exception:
+            return 0
 
     def _report_hand(self, what: str) -> None:
         """学生在黑屏里举手 / 放下，报给老师（带状态，两端好显示）"""
@@ -625,7 +647,12 @@ class MythclassClient:
                     if audio and self.api.upload_audio(audio):
                         self.store.mark_uploaded("audio_logs", [item["id"] for item in audio])
 
-                    self.api.heartbeat(identity.local_ips(), trust.own_key())
+                    self.api.heartbeat(
+            identity.local_ips(),
+            trust.own_key(),
+            lan_port=self._used_lan_port(),
+            lan_web_port=self._used_web_port(),
+        )
             except Exception as err:
                 self.log(f"上报出问题了：{err}", logging.WARNING)
 
@@ -752,6 +779,34 @@ class MythclassClient:
         self.lan.start()
         # 直连端口要是被系统占着换了，网页那边别跟着挑到同一个
         self.web.avoid_port = int(getattr(self.lan, 'port', 0) or 0)
+        # 端口都起来了，立刻补一次真实端口（注册那会儿它们还没建）
+        def _report_ports() -> None:
+            try:
+                import time as _t
+
+                _t.sleep(3)  # 等连接先握上手
+                if self.api:
+                    self.api.heartbeat(
+                        identity.local_ips(),
+                        trust.own_key(),
+                        lan_port=self._used_lan_port(),
+                        lan_web_port=self._used_web_port(),
+                    )
+                    self.log(
+                        f"已上报局域网端口：{self._used_lan_port()}/{self._used_web_port()}"
+                    )
+            except Exception as err:
+                self.log(f"补报端口失败：{err}", logging.WARNING)
+
+        threading.Thread(target=_report_ports, daemon=True).start()
+        # socket 心跳也报一次实际端口（教师端拼局域网地址要用）
+        try:
+            self.socket.ports_provider = lambda: {
+                "lanPort": self._used_lan_port(),
+                "lanWebPort": self._used_web_port(),
+            }
+        except Exception:
+            pass
         self.web.start()
         self.tray.start()
 
