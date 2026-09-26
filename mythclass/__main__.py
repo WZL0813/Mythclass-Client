@@ -167,7 +167,9 @@ class MythclassClient:
             "localIps": identity.local_ips(),
             "lanPort": int(getattr(self.lan, "port", 0) or 0),
             "lanWebPort": int(getattr(self.web, "port", 0) or 0),
+            "fields": self._settings_fields(),
         }
+        self.web.apply_lan_settings = self._apply_lan_settings
         self.lan = lanport.LanPort(
             trust=trust,
             on_command=self._run_command_sync,
@@ -398,6 +400,163 @@ class MythclassClient:
             return int(getattr(self.web, "port", 0) or 0) or int(_lw.DEFAULT_PORT)
         except Exception:
             return 0
+
+    # ------------------------------ 局域网改设置 ------------------------------
+
+    # 能被局域网页面一键改的设置。密钥验证在 _apply_lan_settings 里做。
+    EDITABLE = [
+        {"key": "clientName", "label": "机器名", "type": "text"},
+        {"key": "screenFps", "label": "屏幕帧率", "type": "number", "min": 1, "max": 30},
+        {"key": "screenQuality", "label": "画面质量", "type": "number", "min": 20, "max": 95},
+        {"key": "netBanAutoLiftMinutes", "label": "禁止上网几分钟后自动放开（0 = 不自动）",
+         "type": "number", "min": 0, "max": 1440},
+        {"key": "autoUpdate", "label": "自动更新", "type": "bool"},
+        {"key": "autostart", "label": "开机自启", "type": "bool", "restart": True},
+        {"key": "protectProcess", "label": "进程保护", "type": "bool", "restart": True},
+        {"key": "disableTaskManager", "label": "禁用任务管理器", "type": "bool", "restart": True},
+        {"key": "maxLogCount", "label": "最多保留记录条数", "type": "number", "min": 100, "max": 100000},
+        {"key": "maxLogSizeMB", "label": "记录占用上限（MB）", "type": "number", "min": 10, "max": 2048},
+        {"key": "teacherIp", "label": "常用老师 IP", "type": "text"},
+        {"key": "watchDirs", "label": "监控哪些文件夹（一行一个）", "type": "list", "restart": True},
+        {"key": "servers", "label": "服务器地址（一行一个，官方那条会保留）", "type": "list", "restart": True},
+        {"key": "newAdminPassword", "label": "客户端管理密码（留空表示不改）", "type": "secret"},
+    ]
+
+    def _settings_fields(self) -> list[dict]:
+        """清单 + 当前值，页面照着渲染"""
+        out = []
+        for item in self.EDITABLE:
+            row = dict(item)
+            key = item["key"]
+            if key == "maxLogSizeMB":
+                row["value"] = int((self.cfg.get("maxLogSize") or 0) // (1024 * 1024)) or 200
+            elif key == "servers":
+                row["value"] = [s.get("url") for s in (self.cfg.get("servers") or []) if isinstance(s, dict)]
+            elif key == "newAdminPassword":
+                row["value"] = ""
+            else:
+                row["value"] = self.cfg.get(key)
+            out.append(row)
+        return out
+
+    def _apply_lan_settings(self, key: str, values: dict):
+        """局域网一键改设置。必须带对本机密钥 —— 改设置是敏感操作。"""
+        import hmac
+
+        try:
+            good = trust.own_key()
+        except Exception as err:
+            return {"ok": False, "code": "NO_KEY", "error": f"本机密钥取不到：{err}"}
+        if not good or not hmac.compare_digest(str(key or ""), str(good)):
+            self.log("局域网改设置被拒：密钥不对", logging.WARNING)
+            return {"ok": False, "code": "BAD_KEY", "error": "密钥不对，改不了"}
+
+        values = values if isinstance(values, dict) else {}
+        schema = {f["key"]: f for f in self.EDITABLE}
+        applied: list[str] = []
+        need_restart: list[str] = []
+        problems: list[str] = []
+        changed_autostart = None
+
+        for name, raw in values.items():
+            field = schema.get(name)
+            if not field:
+                problems.append(f"{name}：不认识这一项")
+                continue
+            label = field["label"]
+            kind = field["type"]
+            hit = False
+            try:
+                if kind == "bool":
+                    val = bool(raw)
+                    if self.cfg.get(name) != val:
+                        self.cfg[name] = val
+                        applied.append(f"{label} = {'开' if val else '关'}")
+                        hit = True
+                        if name == "autostart":
+                            changed_autostart = val
+                elif kind == "number":
+                    val = int(float(raw))
+                    lo, hi = field.get("min"), field.get("max")
+                    if lo is not None and val < lo:
+                        problems.append(f"{label}：不能小于 {lo}")
+                        continue
+                    if hi is not None and val > hi:
+                        problems.append(f"{label}：不能大于 {hi}")
+                        continue
+                    if name == "maxLogSizeMB":
+                        self.cfg["maxLogSize"] = val * 1024 * 1024
+                    else:
+                        self.cfg[name] = val
+                    applied.append(f"{label} = {val}")
+                    hit = True
+                elif kind == "list":
+                    if isinstance(raw, str):
+                        items = [x.strip() for x in raw.replace(chr(13), "").split(chr(10))]
+                    else:
+                        items = [str(x).strip() for x in (raw or [])]
+                    items = [x for x in items if x]
+                    if name == "servers":
+                        keep = [s for s in (self.cfg.get("servers") or [])
+                                if isinstance(s, dict) and s.get("official")]
+                        new_list = list(keep)
+                        for url in items:
+                            if any(s.get("url") == url for s in new_list):
+                                continue
+                            new_list.append({"name": url, "url": url, "enabled": True, "official": False})
+                        self.cfg["servers"] = new_list
+                        applied.append(f"服务器 = {len(new_list)} 条")
+                    else:
+                        self.cfg[name] = items
+                        applied.append(f"{label} = {len(items)} 个")
+                    hit = True
+                elif kind == "secret":
+                    text = str(raw or "")
+                    if not text:
+                        continue
+                    if len(text) < 6:
+                        problems.append("管理密码：至少 6 位")
+                        continue
+                    from . import security
+
+                    self.cfg["adminPasswordHash"] = security.hash_password(text)
+                    self.cfg["requirePasswordChange"] = False
+                    applied.append("客户端管理密码：已改")
+                    hit = True
+                else:
+                    text = str(raw or "").strip()
+                    if self.cfg.get(name) != text:
+                        self.cfg[name] = text
+                        applied.append(f"{label} = {text or '（空）'}")
+                        hit = True
+            except Exception as err:
+                problems.append(f"{label}：{type(err).__name__}")
+                continue
+
+            if hit and field.get("restart"):
+                need_restart.append(label)
+
+        if applied:
+            config.save(self.cfg)
+
+        # 自启要真的去登记/取消
+        if changed_autostart is not None:
+            try:
+                if changed_autostart:
+                    guard.enable_autostart()
+                else:
+                    guard.disable_autostart()
+            except Exception as err:
+                problems.append(f"自启设置：{err}")
+
+        if applied:
+            self.log("局域网改了设置：" + "；".join(applied))
+        return {
+            "ok": bool(applied) and not problems,
+            "applied": applied,
+            "needRestart": need_restart,
+            "problems": problems,
+        }
 
     def _report_hand(self, what: str) -> None:
         """学生在黑屏里举手 / 放下，报给老师（带状态，两端好显示）"""

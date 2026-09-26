@@ -299,6 +299,16 @@ class LanWeb:
                     self._json(200 if ok2 else 400, {"ok": ok2, "message": msg})
                     return
 
+                if path == "/api/settings":
+                    handler = getattr(outer, "apply_lan_settings", None)
+                    if not callable(handler):
+                        self._json(503, {"ok": False, "error": "客户端不支持改设置"})
+                        return
+                    data = handler(str(payload.get("key") or ""), payload.get("values") or {})
+                    code = 200 if data.get("ok") else (403 if data.get("code") == "BAD_KEY" else 400)
+                    self._json(code, data)
+                    return
+
                 if path == "/api/sounds/test":
                     handler = getattr(outer, "play_sound", None)
                     ok2, msg = handler(str(payload.get("sound") or "")) if callable(handler) else (False, "不支持")
@@ -504,7 +514,7 @@ PAGE = """<!doctype html>
   .card h2 { margin: 0 0 10px; font-size: 13.5px; color: var(--dim); font-weight: 500; }
   .grid.rail-off .rail, .grid.events-off .events { overflow: hidden; padding: 0; border: 0; opacity: 0; pointer-events: none; }
 
-  .kv { display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 6px 8px; font-size: 13px; }
+  .kv { display: grid; grid-template-columns: 88px minmax(0,1fr); gap: 7px 14px; font-size: 13px; align-items: baseline; }
   .kv b { color: var(--dim); font-weight: 400; }
   .kv span { word-break: break-all; }
   ul { margin: 0; padding-left: 16px; color: var(--dim); font-size: 13px; }
@@ -547,6 +557,21 @@ PAGE = """<!doctype html>
   }
   .hb-dot { width: 9px; height: 9px; border-radius: 50%; background: #e8b778; box-shadow: 0 0 8px #e8b778; }
   .hand-bar button { margin-left: auto; }
+
+  .set-h { margin: 18px 0 10px; color: #cfe0c8; font-size: 14px; font-weight: 600; }
+  .set-form { display: grid; gap: 10px; margin-top: 6px; }
+  .set-row { display: grid; grid-template-columns: 220px 1fr; gap: 10px; align-items: center; }
+  .set-row label { color: #b9c9b3; font-size: 13px; }
+  .set-row input[type="text"], .set-row input[type="number"], .set-row input[type="password"] {
+    background: #141c16; border: 1px solid #2b3a2d; border-radius: 8px;
+    color: #e8eadf; padding: 7px 10px; font-size: 13px;
+  }
+  .set-row textarea {
+    background: #141c16; border: 1px solid #2b3a2d; border-radius: 8px;
+    color: #e8eadf; padding: 7px 10px; font-size: 13px; min-height: 62px; resize: vertical;
+  }
+  .set-row .tip { color: #7d8f7a; font-size: 12px; }
+  .set-row.wide { grid-template-columns: 1fr; }
 
   /* 屏幕区 */
   .screen-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
@@ -906,8 +931,17 @@ PAGE = """<!doctype html>
 
         <div class="pane" id="pane-settings">
           <div class="kv" id="setKv"></div>
-          <p class="muted tiny" style="margin-top:14px">
-            这里是这台机器的设置，看得到、改不了 —— 要改去机器上开客户端改。
+
+          <h4 class="set-h">一键修改客户端设置</h4>
+          <div class="set-form" id="setForm"></div>
+          <div class="cmd-row" style="margin-top:12px">
+            <input class="nt-input" id="setKey" type="password" autocomplete="off"
+                   placeholder="再输一次密钥（本机局域网密钥）" style="flex:1">
+            <button class="btn primary" id="setSave">保存</button>
+          </div>
+          <p class="muted tiny" style="margin-top:8px">
+            改设置要再验一次密钥，防止别人用你开着的页面乱改。
+            需要重启客户端才生效的项，保存后会标出来。
           </p>
         </div>
       </section>
@@ -1137,22 +1171,121 @@ async function loadLogs() {
     : '<tr><td colspan="4" class="muted">这台机器最近没改什么文件。</td></tr>';
 }
 
+// 一键修改客户端设置：照着 /api/settings 给的 fields 渲染
+const NL = String.fromCharCode(10);
+
+// 记住每项原来的值 —— 保存时只提交改动过的，免得把没碰的项覆盖成空
+const ORIGINAL = {};
+
+function renderSettingsForm(fields) {
+  const box = document.getElementById('setForm');
+  Object.keys(ORIGINAL).forEach((k) => delete ORIGINAL[k]);
+  (fields || []).forEach((f) => {
+    ORIGINAL[f.key] = f.type === 'list' ? (f.value || []).join(NL) : (f.value == null ? '' : String(f.value));
+  });
+  box.innerHTML = (fields || []).map((f) => {
+    const key = f.key;
+    const tip = f.restart ? '<span class="tip">（要重启）</span>' : '';
+    if (f.type === 'bool') {
+      return `<div class="set-row"><label>${f.label}${tip}</label>
+        <label><input type="checkbox" data-set="${key}" data-type="bool"${f.value ? ' checked' : ''}> 开</label></div>`;
+    }
+    if (f.type === 'list') {
+      const text = (f.value || []).join(NL);
+      return `<div class="set-row wide"><label>${f.label}${tip}</label>
+        <textarea data-set="${key}" data-type="list">${text}</textarea></div>`;
+    }
+    if (f.type === 'number') {
+      return `<div class="set-row"><label>${f.label}${tip}</label>
+        <div><input type="number" data-set="${key}" data-type="number" value="${f.value}"
+          min="${f.min}" max="${f.max}" style="width:140px">
+        <span class="tip">范围 ${f.min} ~ ${f.max}</span></div></div>`;
+    }
+    if (f.type === 'secret') {
+      return `<div class="set-row"><label>${f.label}${tip}</label>
+        <input type="password" data-set="${key}" data-type="secret" autocomplete="new-password" placeholder="留空不改"></div>`;
+    }
+    return `<div class="set-row"><label>${f.label}${tip}</label>
+      <input type="text" data-set="${key}" data-type="text" value="${f.value == null ? '' : f.value}"></div>`;
+  }).join('');
+}
+
+function collectSettings() {
+  const out = {};
+  document.querySelectorAll('[data-set]').forEach((el) => {
+    const key = el.dataset.set;
+    const type = el.dataset.type;
+    const orig = ORIGINAL[key] == null ? '' : ORIGINAL[key];
+    if (type === 'bool') {
+      if (el.checked !== (orig === 'true')) out[key] = el.checked;
+      return;
+    }
+    if (type === 'number') {
+      if (String(el.value) !== orig) out[key] = Number(el.value);
+      return;
+    }
+    // 密码框：只有填了才提交（空 = 不改）
+    if (type === 'secret') {
+      if (el.value) out[key] = el.value;
+      return;
+    }
+    if (type === 'list') {
+      const text = el.value.split(NL).map((x) => x.trim()).filter(Boolean).join(NL);
+      if (text !== orig.split(NL).map((x) => x.trim()).filter(Boolean).join(NL)) {
+        out[key] = el.value.split(NL).map((x) => x.trim()).filter(Boolean);
+      }
+      return;
+    }
+    if (el.value !== orig) out[key] = el.value;
+  });
+  return out;
+}
+
+async function saveSettings() {
+  const key = document.getElementById('setKey').value.trim();
+  if (!key) {
+    logEvent('要改设置得先填密钥', true);
+    return;
+  }
+  const { status, data } = await api('/api/settings', { key, values: collectSettings() });
+  if (status === 403) {
+    logEvent('密钥不对，没改成', true);
+    return;
+  }
+  const done = (data && data.applied) || [];
+  const bad = (data && data.problems) || [];
+  const restart = (data && data.needRestart) || [];
+  done.forEach((x) => logEvent('已设置：' + x, false));
+  bad.forEach((x) => logEvent('没改成：' + x, true));
+  if (restart.length) logEvent('这些要重启客户端才生效：' + restart.join('、'), false);
+  if (!done.length && !bad.length) logEvent('没有改动', false);
+  document.getElementById('setKey').value = '';
+  await loadSettings();
+}
+
 async function loadSettings() {
   const { data } = await api('/api/settings');
-  if (!data) return;
+  const d = data || {};
   const rows = [
-    ['名称', data.name || '—'],
-    ['机器 ID', data.clientUid || '—'],
-    ['版本', 'v' + (data.version || '?')],
-    ['内网地址', (data.localIps || []).join('、') || '—'],
-    ['服务端', (data.servers || []).join('、') || '—'],
-    ['监视目录', (data.watchDirs || []).join('、') || '（没设）'],
-    ['画面帧率', data.screenFps + ' 帧/秒'],
-    ['画面质量', data.screenQuality + '%'],
-    ['自动更新', data.autoUpdate ? '开着' : '关着'],
+    ['机器名', d.name],
+    ['机器号', d.clientUid],
+    ['版本', d.version],
+    ['内网地址', (d.localIps || []).join('、')],
+    ['局域网端口', d.lanPort + ' / ' + d.lanWebPort],
+    ['服务器', (d.servers || []).join('、')],
+    ['监控文件夹', (d.watchDirs || []).length + ' 个'],
+    ['屏幕帧率', d.screenFps],
+    ['画面质量', d.screenQuality],
+    ['自动更新', d.autoUpdate ? '开' : '关'],
   ];
-  document.getElementById('setKv').innerHTML = rows.map(([k, v]) => `<b>${k}</b><span>${v}</span>`).join('');
+  document.getElementById('setKv').innerHTML = rows
+    .map(([k, v]) => `<span>${k}</span><b>${v == null ? '' : v}</b>`)
+    .join('');
+  renderSettingsForm(d.fields);
 }
+
+document.getElementById('setSave').onclick = saveSettings;
+
 
 const fmtTime = (s) => {
   const n = Math.round(Number(s) || 0);
