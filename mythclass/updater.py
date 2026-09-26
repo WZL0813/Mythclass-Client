@@ -158,12 +158,48 @@ def run_installer(path: Path) -> bool:
         import ctypes
 
         # ShellExecuteW 的 runas：弹 UAC，用户点了同意才开始装
+        # 注意：**不能**加 --nolaunch —— 安装器装完会先把旧客户端杀掉，
+        # 不许它启动新的，机器上就没客户端了，要等下次登录才自启。
         result = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", str(path), "--silent --noelevate --nolaunch", None, 1
+            None, "runas", str(path), "--silent --noelevate", None, 1
         )
         return int(result) > 32
     except Exception:
         return False
+
+
+def schedule_relaunch(delay: float = 45.0) -> None:
+    """兜底：过一会儿把客户端再拉起来一次。
+
+    正常情况安装器自己会拉（去掉 --nolaunch 之后）。
+    万一它没拉（比如用户点了取消、或者安装器版本老），
+    这个小助手会在 delay 秒后补一次 —— 已经在跑就不重复拉。
+    """
+    import subprocess
+    import sys
+
+    exe = Path(sys.executable)
+    if exe.name.lower() == "pythonw.exe":
+        target = [str(exe), "-m", "mythclass"]
+    else:
+        # 打包后的客户端：直接跑同目录下的 exe
+        cand = exe.parent / "MythclassClient.exe"
+        target = [str(cand)] if cand.exists() else [str(exe), "-m", "mythclass"]
+
+    script = (
+        "import subprocess, sys, time\n"
+        f"time.sleep({delay!r})\n"
+        "import ctypes\n"
+        "u = ctypes.windll.user32\n"
+        "h = u.FindWindowW(None, 'Mythclass')\n"
+        "if h:\n"
+        "    sys.exit(0)\n"
+        f"subprocess.Popen({target!r}, close_fds=True)\n"
+    )
+    try:
+        subprocess.Popen([str(exe), "-c", script], close_fds=True)
+    except Exception:
+        pass
 
 
 def restart_soon(delay: float = 1.0) -> None:

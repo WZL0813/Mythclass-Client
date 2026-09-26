@@ -438,7 +438,10 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
                 ui_result("下载没成功：\n" + why + "\n\n下载地址：\n" + (info_dict.get("url") or "（服务端没给地址）"))
                 return
             if up.run_installer(path):
-                ui_result("安装包已经起来了，客户端马上退出让位。装完会自动打开。")
+                # 装完应该自己回来；再挂一个兜底，免得更新完机器上没客户端
+                up.schedule_relaunch(45)
+                ui_result("安装包已经起来了，装完客户端会自动打开（约一分钟）。\n"
+                          "要是过两分钟还没看到托盘图标，手动开一下就行。")
                 up.restart_soon(1.5)
             else:
                 ui_result(f"安装包下好了，放在：\n{path}\n但我起不来它（可能你点了取消 UAC）。手动双击也行。")
