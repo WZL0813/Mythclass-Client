@@ -569,15 +569,13 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
         def do_install(info_dict):
             from . import updater as up
 
-            def go():
-                text = "正在下载新版本…"
-                ui_result(text)
-
             _update_notify(cfg, f"开始下载新版本 v{info_dict.get('latest')} …")
             path = up.download(info_dict.get("url", ""), info_dict.get("sha256", ""))
             if not path:
                 why = (up.LAST_ERROR[0] if getattr(up, "LAST_ERROR", None) else "") or "不知道原因"
-                ui_result("下载没成功：\n" + why + "\n\n下载地址：\n" + (info_dict.get("url") or "（服务端没给地址）"))
+                _update_notify(cfg, f"下载失败：{why[:120]}")
+                if not silent:
+                    ui_result("下载没成功：\n" + why + "\n\n下载地址：\n" + (info_dict.get("url") or "（服务端没给地址）"))
                 return
             try:
                 size_mb = round(path.stat().st_size / 1048576, 1)
@@ -592,17 +590,19 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
                 f"开始安装 v{info_dict.get('latest')}，客户端会自己重启，装完就回来。",
             )
             if up.run_installer(path):
-                # 装完应该自己回来；再挂一个兜底，免得更新完机器上没客户端
+                # 装完应该自己回来；再挂一个兜底，免得更新完机器上没客户端。
+                # 这里**不弹对话框** —— 系统通知已经说过「开始安装」了，
+                # 再多一个要点「关闭」的窗口只会烦人。
                 up.schedule_relaunch(45)
-                ui_result("安装包已经起来了，装完客户端会自动打开（约一分钟）。\n"
-                          "要是过两分钟还没看到托盘图标，手动开一下就行。")
                 up.restart_soon(1.5)
             else:
                 why = (up.LAST_ERROR[0] if getattr(up, "LAST_ERROR", None) else "") or "不知道原因"
                 # 教室那台机器前面可能有人 —— 给个能点的窗口，别只留一句话
+                _update_notify(cfg, f"自动安装没成功：{why[:120]}")
                 if info_dict.get("mandatory"):
+                    # 强制更新：教室那台机器前面可能有人 —— 给个能点的窗口重试
                     _reinstall_prompt(path, lambda: do_install(info_dict))
-                else:
+                elif not silent:
                     ui_result(
                         "安装包下好了，放在：\n" + str(path) + "\n\n自动装不上，试过的路：\n" + why,
                         offer=lambda: do_install(info_dict),

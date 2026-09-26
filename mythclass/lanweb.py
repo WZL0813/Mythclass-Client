@@ -1027,9 +1027,9 @@ PAGE = """<!doctype html>
 
           <h4 class="set-h">Windows 命令行（cmd）</h4>
           <div class="cmd-row">
-            <span class="mono" style="color:#7fae7a">C:\&gt;</span>
+            <span class="mono" style="color:#7fae7a">C:\\&gt;</span>
             <input class="nt-input" id="shInput" style="flex:1"
-                   placeholder="比如 ipconfig / tasklist / dir C:\  （回车执行，↑↓ 翻历史）">
+                   placeholder="比如 ipconfig / tasklist / dir C:\\  （回车执行，↑↓ 翻历史）">
             <button class="btn primary" id="shRun">执行</button>
             <button class="btn" id="shClear">清屏</button>
           </div>
