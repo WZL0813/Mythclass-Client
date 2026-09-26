@@ -39,6 +39,90 @@ def _launch_command() -> str:
 # ============================== 开机自启 ==============================
 
 
+TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Mythclass 客户端（最高权限，便于管防火墙/关机）</Description></RegistrationInfo>
+  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{user}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>{exe}</Command></Exec></Actions>
+</Task>
+"""
+
+
+def ensure_elevated_autostart() -> tuple[bool, str]:
+    """建一个「登录时以最高权限启动」的计划任务。
+
+    只在客户端自己是管理员时能建（安装程序启动的第一次就是）。
+    有了它，以后开机就是提权身份 —— 改防火墙、关机这些才做得动，
+    而且不像 UAC 那样要点确认。
+
+    用 XML 建任务的关键：LogonType=InteractiveToken + RunLevel=HighestAvailable，
+    这样不需要存用户密码。
+    """
+    import os
+    import subprocess
+    import tempfile
+
+    if sys.platform != "win32":
+        return False, "只有 Windows 上需要"
+    if not _is_admin():
+        return False, "现在不是管理员，建不了（用安装包装一次就会建）"
+
+    user = os.environ.get("USERNAME") or ""
+    domain = os.environ.get("USERDOMAIN") or ""
+    who = f"{domain}\\{user}" if domain else user
+    exe = _launch_command()
+
+    xml = TASK_XML.format(user=who, exe=exe)
+    tmp = Path(tempfile.gettempdir()) / "mythclass-task.xml"
+    try:
+        tmp.write_text(xml, encoding="utf-16")
+    except Exception as err:
+        return False, f"写任务定义失败：{err}"
+
+    try:
+        done = subprocess.run(
+            ["schtasks", "/Create", "/TN", TASK_NAME, "/XML", str(tmp), "/F"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if done.returncode == 0:
+            return True, "已经建好「最高权限登录自启」"
+        return False, f"建任务失败：{(done.stderr or done.stdout or '').strip()[:160]}"
+    except Exception as err:
+        return False, f"建任务失败：{type(err).__name__}: {err}"
+    finally:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+
+
+def _is_admin() -> bool:
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
 def enable_autostart() -> tuple[bool, str]:
     """两个都试：当前用户 Run 键（稳），以及计划任务 SYSTEM 权限（狠）"""
     messages = []

@@ -702,6 +702,15 @@ class MythclassClient:
         #      pystray 的 icon.run() 里，排在它後面就永远执行不到
         #      （v2.0.6 到 v2.1.5 本地网页一直是「没开」，就是这个原因）
         #   2) 托盘放最后，它阻塞住正好当主循环，进程才不会起来就退出
+        # 如果这次是管理员（安装程序启动的第一次就是），把"提权自启"建好，
+        # 以后开机就是管理员身份 —— 改防火墙、关机这些才做得动
+        try:
+            made, why = guard.ensure_elevated_autostart()
+            if made:
+                self.log(f"提权自启：{why}")
+        except Exception as err:
+            self.log(f"建提权自启失败：{err}", logging.WARNING)
+
         # 自动检查更新：后台慢慢来，不挡启动
         threading.Thread(target=self._auto_update_loop, daemon=True).start()
 

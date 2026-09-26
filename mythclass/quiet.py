@@ -99,6 +99,25 @@ def show(text: str = "", on_report=None) -> tuple[bool, str]:
         hand_btn.configure(command=toggle_hand)
         hand_btn.place(relx=1.0, rely=1.0, x=-28, y=-26, anchor="se")
 
+        # 老师/局域网那边把手放下时，这个按钮也得跟着变回去
+        def sync_button() -> None:
+            if not _state["on"]:
+                return
+            up = bool(_state["hand"])
+            want = "已举手，点一下放下" if up else "举手"
+            try:
+                if hand_btn.cget("text") != want:
+                    hand_btn.configure(
+                        text=want,
+                        bg="#2f4f3e" if up else "#1d2a20",
+                        fg="#f3efe3" if up else "#8fa88e",
+                    )
+            except Exception:
+                return
+            root.after(1000, sync_button)
+
+        sync_button()
+
         # 叉不掉：关窗口的事件直接吃掉
         root.protocol("WM_DELETE_WINDOW", lambda: None)
 

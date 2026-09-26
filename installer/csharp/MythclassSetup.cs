@@ -30,7 +30,7 @@ namespace MythclassSetup
         // 对话框和「程序和功能」里给用户看的全名
         public const string DisplayName = "Mythclass 若思班级一体机管理系统";
         public const string ExeName = "MythclassClient.exe";
-        public const string Version = "2.9.2";
+        public const string Version = "2.9.3";
         public const string DefaultDir = @"C:\Program Files (x86)\Mythclass";
         public const string RegPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MythclassClient";
         public const string PayloadResource = "payload.zip";

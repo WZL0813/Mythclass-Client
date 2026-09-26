@@ -1024,7 +1024,6 @@ const TOOLS = [
   ['open_url', '开网页', 'M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3a14 14 0 010 18 14 14 0 010-18', { ask: '要在这台机器上打开哪个网址？' }],
   ['quiet', '黑屏安静', 'M4 5h16v14H4zM9 12h6', { ask: '黑屏上写点什么？留空就只黑屏。（学生叉不掉，右下角有举手按钮）' }],
   ['quiet', '取消黑屏', 'M4 5h16v14H4zM9 12h6M4 4l16 16', { args: { on: false } }],
-  ['hand', '举手状态', 'M8 12V6a2 2 0 014 0v6M12 8a2 2 0 014 0v4M16 11a2 2 0 014 0v5a6 6 0 01-6 6h-2a6 6 0 01-6-6v-3a2 2 0 014 0'],
   ['screenshot', '截图', 'M4 8h3l2-2h6l2 2h3v11H4zM12 16a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z'],
   ['net_ban', '禁止上网', 'M12 3a9 9 0 100 18 9 9 0 000-18zM6 6l12 12'],
   ['net_allow', '放开上网', 'M12 3a9 9 0 100 18 9 9 0 000-18zM8 12.5l3 3 5-6'],
@@ -1369,6 +1368,20 @@ $('tools').innerHTML = TOOLS.map(([cmd, label, p], i) =>
 document.querySelectorAll('[data-tool]').forEach((b) => {
   b.onclick = () => {
     const [cmd, label, , extra] = TOOLS[Number(b.dataset.tool)];
+
+    // 重启两次确认、关机三次确认（主人要求）
+    if (cmd === 'reboot') {
+      if (!confirm('要重启这台机器？')) return;
+      if (!confirm('再确认一次：重启后正在做的事会中断，继续？')) return;
+      return send(cmd);
+    }
+    if (cmd === 'shutdown') {
+      if (!confirm('要关机这台机器？')) return;
+      if (!confirm('第二次确认：关机后要人到跟前才能开，继续？')) return;
+      if (!confirm('第三次确认：真的关机？')) return;
+      return send(cmd);
+    }
+
     if (extra && extra.args) return send(cmd, extra.args);
     if (extra && extra.ask !== undefined) {
       const answer = prompt(extra.ask, '');

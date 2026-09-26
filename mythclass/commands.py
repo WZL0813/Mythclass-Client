@@ -22,6 +22,19 @@ from . import config, netban
 CREATE_NO_WINDOW = 0x08000000
 
 
+SAFE_ENV = "MYTHCLASS_SAFE"
+
+
+def safe_mode() -> bool:
+    """测试模式：环境里有 MYTHCLASS_SAFE 就成立。
+
+    自动化测试会带上它 —— 免得点着点着真把机器关了、网断了。
+    """
+    import os
+
+    return bool(os.environ.get(SAFE_ENV))
+
+
 def _hidden(cmd, **kwargs):
     """起个不弹黑框的子进程"""
     kwargs.setdefault("creationflags", CREATE_NO_WINDOW)
@@ -57,10 +70,14 @@ def cmd_unlock(args: dict) -> tuple[bool, str]:
 
 
 def cmd_shutdown(args: dict) -> tuple[bool, str]:
+    if safe_mode():
+        return False, "关机在测试模式下被挡下了（环境里有 MYTHCLASS_SAFE）"
     return _run("shutdown /s /t 5 /c \"Mythclass：老师要求关机\"")
 
 
 def cmd_reboot(args: dict) -> tuple[bool, str]:
+    if safe_mode():
+        return False, "重启在测试模式下被挡下了（环境里有 MYTHCLASS_SAFE）"
     return _run("shutdown /r /t 5 /c \"Mythclass：老师要求重启\"")
 
 
@@ -591,6 +608,15 @@ def cmd_screen_broadcast(args: dict) -> tuple[bool, str]:
     return True, "广播已经开起来"
 
 
+def cmd_net_allow(args: dict) -> tuple[bool, str]:
+    """放开上网（局域网那个按钮发的就是这个名字）"""
+    if safe_mode():
+        return False, "放开上网在测试模式下被挡下了（环境里有 MYTHCLASS_SAFE）"
+    from . import netban
+
+    return netban.lift()
+
+
 def cmd_net_ban(args: dict) -> tuple[bool, str]:
     """禁网 / 放开。要管理员权限。
 
@@ -598,10 +624,20 @@ def cmd_net_ban(args: dict) -> tuple[bool, str]:
     老实现是一句 netsh 拦掉所有出站，连自己都掐——老师再也发不出「放开上网」，
     那台机器就只能人到跟前解锁了。
     """
+    if safe_mode():
+        return False, "禁网在测试模式下被挡下了（环境里有 MYTHCLASS_SAFE）"
     enable = str(args.get("enable", "true")).lower() in ("1", "true", "yes", "on")
 
     if not enable:
         return netban.lift()
+
+    # 改防火墙要管理员权限。没有就别假装成功，说清楚怎么修。
+    if not is_admin():
+        return False, (
+            "改防火墙要管理员权限，客户端现在没有。\n"
+            "修法：用安装包装一次（安装程序是提权的，会顺手建一个「最高权限登录自启」，"
+            "以后开机就是管理员身份），或者右键客户端选「以管理员身份运行」。"
+        )
 
     servers = config.enabled_servers(config.load())
     raw_minutes = args.get("minutes")
@@ -624,11 +660,14 @@ REGISTRY = {
     "file_distribute": cmd_file_distribute,
     "screen_broadcast": cmd_screen_broadcast,
     "net_ban": cmd_net_ban,
+    "net_allow": cmd_net_allow,
+    "net_ban_lift": cmd_net_allow,
     "screenshot": cmd_screenshot,
     "usage_stats": cmd_usage_stats,
     "list_dir": cmd_list_dir,
     "list_windows": cmd_list_windows,
     "close_window": cmd_close_window,
+    "force_close_window": cmd_force_close_window,
     "quiet": cmd_quiet,
     "hand": cmd_hand,
 }
