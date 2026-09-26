@@ -244,8 +244,11 @@ def is_admin() -> bool:
         return False
 
 
-def _task_xml(arguments: str) -> str:
-    """更新执行器的任务定义：交互登录 + 最高权限（不需要存密码）"""
+def _task_xml(command: str, arguments: str = "", workdir: str = "") -> str:
+    """更新执行器的任务定义：交互登录 + 最高权限（不需要存密码）
+
+    command 只允许是"安装目录里的客户端本体" —— 绝不能指向用户可写的东西。
+    """
     who = (os.environ.get("USERDOMAIN") or "") + "\\" + (os.environ.get("USERNAME") or "")
     who = who.strip("\\")
     return f"""<?xml version="1.0" encoding="UTF-16"?>
@@ -268,7 +271,11 @@ def _task_xml(arguments: str) -> str:
     <Enabled>true</Enabled>
   </Settings>
   <Actions Context="Author">
-    <Exec><Command>cmd.exe</Command><Arguments>/c "{apply_cmd_path()}"</Arguments></Exec>
+    <Exec>
+      <Command>{command}</Command>
+      <Arguments>{arguments}</Arguments>
+      <WorkingDirectory>{workdir}</WorkingDirectory>
+    </Exec>
   </Actions>
 </Task>
 """
@@ -282,20 +289,30 @@ def ensure_apply_task() -> tuple[bool, str]:
     """
     if os.name != "nt":
         return False, "只有 Windows 需要"
+
+    # 关键：任务只许跑"普通用户改不动"的那份客户端（先查这条，比管理员更根本）
+    exe = Path(sys.executable).resolve()
+    if not is_protected_exe(exe):
+        return False, f"这份客户端在可写目录里（{exe}），不给它建最高权限任务"
+
     if not is_admin():
         return False, "现在不是管理员身份，建不了（安装程序那次会建）"
 
     try:
-        cmd_path = apply_cmd_path()
-        cmd_path.parent.mkdir(parents=True, exist_ok=True)
-        if not cmd_path.exists():
-            cmd_path.write_text("@echo off\r\nrem 由客户端写入要执行的更新命令\r\n", encoding="utf-8")
-    except Exception as err:
-        return False, f"更新脚本目录建不了：{err}"
+        update_dir().mkdir(parents=True, exist_ok=True)
+        # 旧的用户可写脚本不能再留着了 —— 那正是提权的入口
+        old_cmd = update_dir() / "apply-update.cmd"
+        if old_cmd.exists():
+            old_cmd.unlink()
+    except Exception:
+        pass
 
     tmp = Path(tempfile.gettempdir()) / "mythclass-update-task.xml"
     try:
-        tmp.write_text(_task_xml(""), encoding="utf-16")
+        tmp.write_text(
+            _task_xml(str(exe), "--apply-update", str(exe.parent)),
+            encoding="utf-16",
+        )
     except Exception as err:
         return False, f"写任务定义失败：{err}"
 
@@ -317,20 +334,18 @@ def ensure_apply_task() -> tuple[bool, str]:
 
 
 def _run_apply_task(path: Path) -> tuple[bool, str]:
-    """把要装的包写进脚本，让计划任务以最高权限去跑（不弹 UAC）"""
+    """把"要装哪个包"写下来，然后让最高权限那个任务去跑（不弹 UAC）。
+
+    任务跑的是**安装目录里的客户端本体**（--apply-update），
+    它自己会去服务端核对 sha256 —— 本地改过的文件过不了这一关。
+    """
     if os.name != "nt":
         return False, "只有 Windows 需要"
+
     try:
-        cmd_path = apply_cmd_path()
-        cmd_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd_path.write_text(
-            "@echo off\r\n"
-            "rem Mythclass 自动更新：由客户端写入，计划任务以最高权限执行\r\n"
-            f'"{path}" --silent --noelevate\r\n',
-            encoding="utf-8",
-        )
+        write_pending(path)
     except Exception as err:
-        return False, f"写更新脚本失败：{type(err).__name__}"
+        return False, f"写更新提示失败：{type(err).__name__}"
 
     try:
         done = subprocess.run(
@@ -342,6 +357,67 @@ def _run_apply_task(path: Path) -> tuple[bool, str]:
         return False, f"任务没跑起来：{(done.stderr or done.stdout or '').strip()[:100]}"
     except Exception as err:
         return False, f"任务没跑起来：{type(err).__name__}: {err}"
+
+
+def apply_pending_update() -> tuple[bool, str]:
+    """以管理员身份被拉起来时执行：核对服务端的 sha256，然后装。
+
+    这里是提权之后跑的，所以每一步都要往严里走：
+      - 只认 update 目录下的 .exe
+      - 必须能从服务端拿到 sha256（拿不到就不装）
+      - 本地文件的 sha256 必须和服务端一致
+    """
+    import json as _json
+
+    note = pending_path()
+    if not note.exists():
+        return False, "没有待安装的更新"
+
+    try:
+        info = _json.loads(note.read_text(encoding="utf-8"))
+    except Exception as err:
+        return False, f"更新提示读不了：{type(err).__name__}"
+
+    target = Path(str(info.get("installer") or ""))
+    try:
+        target = target.resolve()
+        root = update_dir().resolve()
+    except Exception as err:
+        return False, f"路径不对：{err}"
+
+    if not str(target).lower().startswith(str(root).lower()):
+        return False, f"要装的文件不在更新目录里，拒绝：{target}"
+    if target.suffix.lower() != ".exe" or not target.is_file():
+        return False, f"要装的不是个 exe：{target}"
+
+    # 服务端说了算
+    try:
+        from . import config
+
+        remote = check(config.load())
+    except Exception as err:
+        return False, f"问服务端失败：{type(err).__name__}: {err}"
+
+    if not remote:
+        return False, "服务端没给更新信息，拒绝安装"
+    want = (remote.get("sha256") or "").strip().lower()
+    if not want:
+        return False, "服务端没给 sha256，拒绝安装（宁可不更新）"
+
+    try:
+        actual = hashlib.sha256(target.read_bytes()).hexdigest()
+    except Exception as err:
+        return False, f"算 sha256 失败：{err}"
+    if actual != want:
+        return False, f"本地的包装文件和服务端对不上（要 {want[:12]}…，实际 {actual[:12]}…），拒绝安装"
+
+    try:
+        ok_run, why = _open_direct(target)
+    except Exception as err:
+        return False, f"起安装包失败：{err}"
+    if not ok_run:
+        return False, f"起安装包失败：{why}"
+    return True, f"校验通过（{want[:12]}…），开始安装 {info.get('version') or ''}"
 
 
 def _open_direct(path: Path) -> tuple[bool, str]:
@@ -366,6 +442,43 @@ def _open_runas(path: Path) -> tuple[bool, str]:
     if result > 32:
         return True, "已经起来了（UAC 已同意）"
     return False, SHELL_ERRORS.get(result, f"错误码 {result}")
+
+
+def is_protected_exe(exe: Path | None = None) -> bool:
+    """这个 exe 是不是在普通用户改不动的地方。
+
+    只有这种可执行文件才配让「最高权限任务」去跑 —— 否则等于给
+    本地用户留了一条提权的路。
+    """
+    try:
+        p = Path(exe or sys.executable).resolve()
+    except Exception:
+        return False
+    text = str(p).lower()
+    roots = (
+        (os.environ.get("ProgramFiles") or r"C:\Program Files").lower(),
+        (os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)").lower(),
+        (os.environ.get("SystemRoot") or r"C:\Windows").lower(),
+    )
+    return any(text.startswith(root) for root in roots)
+
+
+def pending_path() -> Path:
+    """待安装的更新信息（只当提示用，真正依据是服务端的 sha256）"""
+    return update_dir() / "pending-update.json"
+
+
+def write_pending(installer: Path, version: str = "", url: str = "") -> None:
+    """把"要装哪个包"写下来，给提权后的自己去读"""
+    import json as _json
+
+    try:
+        pending_path().write_text(
+            _json.dumps({"installer": str(installer), "version": version, "url": url}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
 
 
 def run_installer(path: Path) -> bool:

@@ -4,6 +4,7 @@ python -m mythclass              正常启动（托盘 + 后台）
 python -m mythclass --guard <pid> 守护模式，盯住主进程
 python -m mythclass --console    前台跑，日志直接打屏上（调试用）
 python -m mythclass --status     打印状态就退出
+python -m mythclass --apply-update  以管理员身份执行待安装的更新（内部用）
 """
 
 from __future__ import annotations
@@ -1125,6 +1126,18 @@ def main(argv: list[str] | None = None) -> int:
         pid = int(argv[index + 1]) if len(argv) > index + 1 else 0
         guard.run_guardian(pid)
         return 0
+
+    # 被最高权限任务拉起来装更新：核对服务端的 sha256，通过才装
+    if "--apply-update" in argv:
+        from . import updater as _up
+
+        made, why = _up.apply_pending_update()
+        try:
+            with open(config.APP_DIR / "apply-update.log", "a", encoding="utf-8") as fh:
+                fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {'成功' if made else '失败'}：{why}\n")
+        except Exception:
+            pass
+        return 0 if made else 1
 
     if "--status" in argv:
         client = MythclassClient(console=True)

@@ -83,6 +83,16 @@ def ensure_elevated_autostart() -> tuple[bool, str]:
     if not _is_admin():
         return False, "现在不是管理员，建不了（用安装包装一次就会建）"
 
+    # 只给"普通用户改不动"的那份客户端建最高权限任务。
+    # 开发态（python.exe 在用户目录里）就别建 —— 那等于给本地用户留提权口子。
+    try:
+        from . import updater as _up
+
+        if not _up.is_protected_exe(Path(sys.executable).resolve()):
+            return False, "这份客户端在可写目录里，不给它建最高权限任务"
+    except Exception:
+        pass
+
     user = os.environ.get("USERNAME") or ""
     domain = os.environ.get("USERDOMAIN") or ""
     who = f"{domain}\\{user}" if domain else user
