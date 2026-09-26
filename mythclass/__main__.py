@@ -180,6 +180,16 @@ class MythclassClient:
         except Exception:
             pass
 
+        # 局域网「命令」页的 cmd 终端（路由那边会强制验密钥）
+        def _run_shell(command: str, timeout: float = 20.0):
+            from . import shell as shell_mod
+
+            ok_run, text = shell_mod.run(command, timeout=timeout)
+            self.log(f"局域网执行命令：{command}（{'成功' if ok_run else '失败'}）")
+            return ok_run, text
+
+        self.web.run_shell = _run_shell
+
         self.web.settings_view = lambda: {
             "name": self.cfg.get("clientName") or "教室一体机",
             "clientUid": self.client_uid,

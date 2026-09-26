@@ -312,6 +312,24 @@ class LanWeb:
                     self._json(200 if ok2 else 400, {"ok": ok2, "message": msg})
                     return
 
+                if path == "/api/shell":
+                    # 这条能跑任意命令 —— 必须带对密钥，光靠 IP 信任不行
+                    if not outer.trust.check_any(self._key()):
+                        self._json(403, {"ok": False, "output": "要带密钥才能执行命令。"})
+                        return
+                    handler = getattr(outer, "run_shell", None)
+                    if not callable(handler):
+                        self._json(503, {"ok": False, "output": "这个客户端版本还不支持终端"})
+                        return
+                    command = str(payload.get("command") or "")
+                    try:
+                        timeout = float(payload.get("timeout") or 20.0)
+                    except Exception:
+                        timeout = 20.0
+                    ok_run, text = handler(command, timeout)
+                    self._json(200, {"ok": ok_run, "output": text, "command": command})
+                    return
+
                 if path == "/api/settings":
                     handler = getattr(outer, "apply_lan_settings", None)
                     if not callable(handler):
@@ -606,6 +624,10 @@ PAGE = """<!doctype html>
   .vo-item.over { border-color: #7fae7a; }
   .vo-no { color: #7d8f7a; font-size: 12px; }
   .vo-grip { color: #6f8a6b; cursor: grab; padding: 0 2px; user-select: none; }
+
+  .sh-out { min-height: 220px; max-height: 420px; overflow: auto; white-space: pre-wrap; }
+  .sh-out .sh-cmd { color: #9ad07f; }
+  .sh-out .sh-bad { color: #e6786e; }
 
   /* 屏幕区 */
   .screen-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
@@ -1002,6 +1024,20 @@ PAGE = """<!doctype html>
             <button class="btn" data-preset="lock">lock</button>
           </div>
           <pre class="out" id="cmdOut">还没执行过命令。</pre>
+
+          <h4 class="set-h">Windows 命令行（cmd）</h4>
+          <div class="cmd-row">
+            <span class="mono" style="color:#7fae7a">C:\&gt;</span>
+            <input class="nt-input" id="shInput" style="flex:1"
+                   placeholder="比如 ipconfig / tasklist / dir C:\  （回车执行，↑↓ 翻历史）">
+            <button class="btn primary" id="shRun">执行</button>
+            <button class="btn" id="shClear">清屏</button>
+          </div>
+          <p class="muted tiny" style="margin-top:6px">
+            以这台机器的当前用户身份运行，输出原样返回（可能含敏感信息）。
+            这个口子必须带密钥，每条命令都会记进客户端日志。
+          </p>
+          <pre class="out sh-out" id="shOut">在这里敲 cmd 命令，回车执行。</pre>
         </div>
 
         <div class="pane" id="pane-settings">
@@ -1541,6 +1577,70 @@ async function pollHand() {
     /* 问不到就算了 */
   }
 }
+// Windows 命令行：敲 cmd，看回显，↑↓ 翻历史
+const shHistory = [];
+let shIndex = -1;
+
+function shWrite(text, cls) {
+  const box = document.getElementById('shOut');
+  if (box.textContent.trim() === '在这里敲 cmd 命令，回车执行。') box.textContent = '';
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = text;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function runShell(command) {
+  const cmd = (command || '').trim();
+  if (!cmd) return;
+  shHistory.push(cmd);
+  shIndex = shHistory.length;
+  shWrite('C:> ' + cmd, 'sh-cmd');
+  shWrite('执行中…');
+  const box = document.getElementById('shOut');
+  try {
+    const { status, data } = await api('/api/shell', { command: cmd });
+    // 把"执行中…"那行去掉
+    if (box.lastChild && box.lastChild.textContent === '执行中…') box.removeChild(box.lastChild);
+    if (status === 403) {
+      shWrite('要带密钥才能执行命令（用链接进来自动就带着）。', 'sh-bad');
+      return;
+    }
+    const out = (data && data.output) || '（没回话）';
+    shWrite(out, data && data.ok === false ? 'sh-bad' : null);
+    logEvent('cmd：' + cmd + ' → ' + (data && data.ok ? '成功' : '失败'), !(data && data.ok));
+  } catch (err) {
+    if (box.lastChild && box.lastChild.textContent === '执行中…') box.removeChild(box.lastChild);
+    shWrite('出错了：' + (err && err.message ? err.message : err), 'sh-bad');
+  }
+}
+
+document.getElementById('shRun').onclick = () => {
+  const input = document.getElementById('shInput');
+  runShell(input.value);
+  input.value = '';
+};
+document.getElementById('shClear').onclick = () => {
+  document.getElementById('shOut').textContent = '';
+};
+document.getElementById('shInput').addEventListener('keydown', (e) => {
+  const input = e.target;
+  if (e.key === 'Enter') {
+    runShell(input.value);
+    input.value = '';
+    e.preventDefault();
+    return;
+  }
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    if (!shHistory.length) return;
+    e.preventDefault();
+    if (e.key === 'ArrowUp') shIndex = Math.max(0, shIndex - 1);
+    else shIndex = Math.min(shHistory.length, shIndex + 1);
+    input.value = shHistory[shIndex] || '';
+  }
+});
+
 document.getElementById('warnClose').onclick = () => {
   document.getElementById('warnBar').classList.add('hidden');
 };
