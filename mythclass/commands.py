@@ -362,12 +362,64 @@ def cmd_usage_stats(args: dict) -> tuple[bool, str]:
     )
 
 
+def _drive_items() -> list[dict]:
+    """列出所有盘符（带总量和剩余空间）"""
+    items: list[dict] = []
+    try:
+        import psutil
+
+        for part in psutil.disk_partitions(all=False):
+            mount = part.mountpoint or ""
+            if not mount:
+                continue
+            name = mount.rstrip("\\/") or mount
+            total = 0
+            free = 0
+            try:
+                usage = psutil.disk_usage(mount)
+                total, free = usage.total, usage.free
+            except Exception:
+                pass
+            items.append(
+                {
+                    "name": name,
+                    "dir": True,
+                    "drive": True,
+                    "size": total,
+                    "free": free,
+                    "mtime": part.fstype or "",
+                }
+            )
+    except Exception:
+        # psutil 不在就退回 Win32
+        try:
+            import ctypes
+
+            mask = ctypes.windll.kernel32.GetLogicalDrives()
+            for i in range(26):
+                if mask & (1 << i):
+                    letter = chr(ord("A") + i) + ":"
+                    items.append({"name": letter, "dir": True, "drive": True, "size": 0, "free": 0, "mtime": ""})
+        except Exception:
+            pass
+    return items
+
+
 def cmd_list_dir(args: dict) -> tuple[bool, str]:
     """列一个目录（磁盘文件查看用）"""
     import json
     from datetime import datetime as _dt
 
-    raw = str(args.get("path") or "").strip() or os.path.expanduser("~")
+    raw = str(args.get("path") or "").strip()
+    # 不给路径 / 给「此电脑」/ 给盘符根 → 先给盘符列表，省得用户手打路径
+    if raw in ("", "drives", "此电脑", "我的电脑", "/", "\\"):
+        import json as _json
+
+        return True, _json.dumps(
+            {"path": "", "parent": "", "drives": True, "items": _drive_items()},
+            ensure_ascii=False,
+        )
+
     target = Path(raw).expanduser()
     if not target.exists():
         return False, f"没有这个路径：{target}"
@@ -383,6 +435,7 @@ def cmd_list_dir(args: dict) -> tuple[bool, str]:
                     {
                         "name": entry.name,
                         "dir": entry.is_dir(),
+                        "drive": False,
                         "size": 0 if entry.is_dir() else stat.st_size,
                         "mtime": _dt.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
                     }

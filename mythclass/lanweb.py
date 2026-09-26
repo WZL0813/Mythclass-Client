@@ -484,6 +484,12 @@ PAGE = """<!doctype html>
     word-break: break-all; max-height: 46vh; overflow: auto;
   }
 
+  .crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 2px 0 10px; font-size: 12.5px; }
+  .crumb { padding: 3px 8px; border-radius: 7px; cursor: pointer; color: var(--dim); border: 1px solid transparent; }
+  .crumb:hover { color: var(--text); border-color: var(--line); }
+  .crumb.on { color: var(--text); background: rgba(94, 154, 115, 0.14); border-color: rgba(94, 154, 115, 0.4); }
+  .crumbs .sep { color: #4d5c50; }
+
   /* 屏幕区 */
   .screen-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
   .btn {
@@ -769,10 +775,12 @@ PAGE = """<!doctype html>
 
         <div class="pane" id="pane-disk">
           <div class="screen-head">
+            <button class="btn" id="diskHome">此电脑</button>
             <button class="btn" id="diskUp">上一级</button>
-            <input class="nt-input" id="diskPath" placeholder="C:\\ 或 D:\\课件" style="flex:1">
+            <input class="nt-input" id="diskPath" placeholder="也可以直接写路径，比如 D:\\课件" style="flex:1">
             <button class="btn primary" id="diskGo">进去</button>
           </div>
+          <div class="crumbs" id="diskCrumbs"></div>
           <table class="logs">
             <thead><tr><th>名称</th><th style="width:90px">大小</th><th style="width:140px">改过的时间</th><th style="width:90px">操作</th></tr></thead>
             <tbody id="diskBody"><tr><td colspan="4" class="muted">写个路径，点「进去」。</td></tr></tbody>
@@ -1037,7 +1045,7 @@ function showPane(name) {
   if (name === 'logs') loadLogs();
   if (name === 'settings') loadSettings();
   if (name === 'usage') loadUsage();
-  if (name === 'disk') loadDisk(diskPath || 'C:\\\\');
+  if (name === 'disk') loadDisk(diskPath || '');
   if (name === 'window') loadWindows();
   if (name === 'audio') loadAudio();
 }
@@ -1078,6 +1086,16 @@ const fmtTime = (s) => {
   if (n < 3600) return Math.floor(n / 60) + ' 分 ' + (n % 60) + ' 秒';
   return Math.floor(n / 3600) + ' 小时 ' + Math.floor((n % 3600) / 60) + ' 分';
 };
+// 拼路径：盘符列表时 base 是空，进去就是 "C:" + 分隔符
+// 这里用 charCode 拿反斜杠，不再写反斜杠字面量（免得被上层字符串吃掉）
+const BS = String.fromCharCode(92);
+function joinPath(base, name) {
+  const text = String(name || '');
+  if (!base) return /:$/.test(text) ? text + BS : text;
+  const tail = base.endsWith(BS) || base.endsWith('/');
+  return base + (tail ? '' : BS) + text;
+}
+
 const fmtSize = (b) => {
   const n = Number(b) || 0;
   if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
@@ -1112,19 +1130,38 @@ async function loadDisk(where) {
     const act = f.dir
       ? `<button class="btn" data-into="${encodeURIComponent(f.name)}">进去</button>`
       : `<button class="btn" data-dl="${encodeURIComponent(f.name)}">下载</button>`;
-    rows.push(`<tr><td>${f.dir ? '📁 ' : ''}${f.name}</td><td class="mono">${f.dir ? '—' : fmtSize(f.size)}</td><td class="mono muted">${f.mtime || ''}</td><td>${act}</td></tr>`);
+    const icon = f.drive ? '💽 ' : f.dir ? '📁 ' : '';
+    const size = f.dir ? (f.drive && f.size ? '剩余 ' + fmtSize(f.free) + ' / ' + fmtSize(f.size) : '—') : fmtSize(f.size);
+    rows.push(`<tr><td>${icon}${f.name}</td><td class="mono">${size}</td><td class="mono muted">${f.drive ? (f.mtime || '') : (f.mtime || '')}</td><td>${act}</td></tr>`);
   });
-  body.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="4" class="muted">空目录。</td></tr>';
+  body.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="4" class="muted">空的。</td></tr>';
+
+  // 面包屑：每一段都能点回去
+  const crumbs = document.getElementById('diskCrumbs');
+  if (crumbs) {
+    if (data.drives || !data.path) {
+      crumbs.innerHTML = '<span class="crumb on">此电脑</span>';
+    } else {
+      const parts = String(data.path).split(/[\\/]/).filter(Boolean);
+      const bits = ['<span class="crumb" data-crumb="">此电脑</span>'];
+      let acc = '';
+      parts.forEach((seg, i) => {
+        acc += (i === 0 ? seg : '\\\\' + seg);
+        const isLast = i === parts.length - 1;
+        bits.push(`<span class="crumb${isLast ? ' on' : ''}" data-crumb="${encodeURIComponent(acc + (i === 0 ? '\\\\' : ''))}">${seg}</span>`);
+      });
+      crumbs.innerHTML = bits.join('<span class="sep">›</span>');
+      crumbs.querySelectorAll('[data-crumb]').forEach((b) => {
+        b.onclick = () => loadDisk(decodeURIComponent(b.dataset.crumb));
+      });
+    }
+  }
   body.querySelectorAll('[data-into]').forEach((b) => {
-    b.onclick = () => {
-      const sep = diskPath.endsWith('\\\\') ? '' : '\\\\';
-      loadDisk(diskPath + sep + decodeURIComponent(b.dataset.into));
-    };
+    b.onclick = () => loadDisk(joinPath(diskPath, decodeURIComponent(b.dataset.into)));
   });
   body.querySelectorAll('[data-dl]').forEach((b) => {
     b.onclick = () => {
-      const sep = diskPath.endsWith('\\\\') ? '' : '\\\\';
-      const full = diskPath + sep + decodeURIComponent(b.dataset.dl);
+      const full = joinPath(diskPath, decodeURIComponent(b.dataset.dl));
       window.open('/api/file?path=' + encodeURIComponent(full), '_blank');
     };
   });
@@ -1182,9 +1219,11 @@ document.getElementById('usageRefresh').onclick = loadUsage;
 document.getElementById('winRefresh').onclick = loadWindows;
 document.getElementById('audioRefresh').onclick = loadAudio;
 document.getElementById('diskGo').onclick = () => loadDisk();
+document.getElementById('diskHome').onclick = () => loadDisk('');
 document.getElementById('diskUp').onclick = async () => {
   const { data } = await api('/api/files?path=' + encodeURIComponent(diskPath));
-  if (data && data.parent) loadDisk(data.parent);
+  // 盘根没有上一级 —— 那就回「此电脑」
+  loadDisk(data && data.parent ? data.parent : '');
 };
 
 // 伸缩
