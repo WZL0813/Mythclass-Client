@@ -72,6 +72,13 @@ class LanWeb:
                 head = self.headers.get("X-Mythclass-Key", "")
                 if head:
                     return head.strip()
+                # 查询串里的 key：下载是按新标签页打开的，带不了自定义请求头
+                try:
+                    got = (parse_qs(urlparse(self.path).query).get("key") or [""])[0].strip()
+                    if got:
+                        return got
+                except Exception:
+                    pass
                 raw = self.headers.get("Cookie", "")
                 for part in raw.split(";"):
                     if part.strip().startswith(COOKIE + "="):
@@ -122,7 +129,10 @@ class LanWeb:
 
                 # 链接里带密钥就直接对上暗号：老师点一下就能用，
                 # 不用手输、也少一步（?key=xxxx）
-                if "key=" in query:
+                # ⚠️ 只对**页面本身**发页面 —— 之前没判路径，结果
+                # /api/file?key=... 也被这里截胡，返回了一坨 HTML，
+                # 下载就一直读不到文件（主机报 NO_FILE / 下到 html）
+                if "key=" in query and path in ("/", "/index.html"):
                     
                     given = (parse_qs(query).get("key") or [""])[0].strip()
                     if outer.trust.check_any(given):
@@ -203,9 +213,12 @@ class LanWeb:
                     query = parse_qs(urlparse(self.path).query)
                     want = (query.get("path") or [""])[0]
                     getter = getattr(outer, "read_file", None)
-                    blob = getter(want) if callable(getter) else None
+                    if not callable(getter):
+                        self._json(503, {"error": "NO_HANDLER", "message": "这个客户端版本还不支持下载"})
+                        return
+                    blob = getter(want)
                     if blob is None:
-                        self._json(404, {"error": "NO_FILE", "message": "读不到这个文件"})
+                        self._json(404, {"error": "NO_FILE", "message": f"读不到这个文件：{want}"})
                         return
                     name, data = blob
                     self.send_response(200)
@@ -1369,7 +1382,8 @@ async function loadDisk(where) {
   body.querySelectorAll('[data-dl]').forEach((b) => {
     b.onclick = () => {
       const full = joinPath(diskPath, decodeURIComponent(b.dataset.dl));
-      window.open('/api/file?path=' + encodeURIComponent(full), '_blank');
+      // 带上密钥：新标签页不会带自定义请求头，只靠 cookie 不稳
+      window.open('/api/file?key=' + encodeURIComponent(key()) + '&path=' + encodeURIComponent(full), '_blank');
     };
   });
 }

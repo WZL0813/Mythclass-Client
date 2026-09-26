@@ -8,6 +8,7 @@ python -m mythclass --status     打印状态就退出
 
 from __future__ import annotations
 
+from pathlib import Path
 import ctypes
 import logging
 import sys
@@ -97,12 +98,25 @@ class MythclassClient:
                 return None
 
         def _read_file(where: str):
+            """局域网下载用。失败一定要说清原因 —— 返回个 None 谁也查不出来。"""
+            p = Path(str(where or "")).expanduser()
             try:
-                p = Path(str(where)).expanduser()
-                if not p.is_file() or p.stat().st_size > 64 * 1024 * 1024:
+                if not p.exists():
+                    self.log(f"局域网下载：路径不存在 → {p}", logging.WARNING)
+                    return None
+                if p.is_dir():
+                    self.log(f"局域网下载：这是个文件夹 → {p}", logging.WARNING)
+                    return None
+                if not p.is_file():
+                    self.log(f"局域网下载：不是普通文件 → {p}", logging.WARNING)
+                    return None
+                size = p.stat().st_size
+                if size > 64 * 1024 * 1024:
+                    self.log(f"局域网下载：文件太大（{size // 1048576}MB，上限 64MB）→ {p}", logging.WARNING)
                     return None
                 return (p.name, p.read_bytes())
-            except Exception:
+            except Exception as err:
+                self.log(f"局域网下载失败：{p} {type(err).__name__}: {err}", logging.WARNING)
                 return None
 
         def _set_quiet(on: bool, text: str = ""):
