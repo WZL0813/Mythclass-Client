@@ -48,6 +48,10 @@ DEFAULTS = {
     "lastUpdateCheck": "",
     "maxLogCount": 5000,
     "maxLogSize": 209715200,
+    # 语音播报（发通知时可以勾上，把内容念出来）
+    "noticeSpeak": False,
+    "noticeVolume": 100,       # 播报音量 0-100
+    "noticeVoice": "",         # 空 = 用默认（优先中文音色）
     "screenFps": 12,
     "screenQuality": 60,
 }

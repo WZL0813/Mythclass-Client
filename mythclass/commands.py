@@ -151,6 +151,12 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
     # 铃声：默认用主人指定那个；也可以给路径、给上传的 data URL
     sound_spec = str(args.get("sound") or "")
 
+    # 语音播报：勾了就把内容念出来（音量 0-100，语速 -10~10）
+    speak_on = str(args.get("voice", "")).lower() in ("1", "true", "yes", "on")
+    speak_volume = _int_or(args.get("voiceVolume"), 100, 0, 100)
+    speak_rate = _int_or(args.get("voiceRate"), 0, -10, 10)
+    speak_voice = str(args.get("voiceName") or "")
+
     size = args.get("size") or {}
     win_w = _int_or(size.get("w"), 520, 320, 2400)
     win_h = _int_or(size.get("h"), 300, 180, 1600)
@@ -165,6 +171,25 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
     done = threading.Event() if wait else None
 
     def show() -> None:
+        # 语音播报：先念出来（异步，不挡窗口），再弹通知
+        if speak_on:
+            try:
+                import logging as _logging
+
+                from . import voice as voice_mod
+
+                _logging.getLogger("mythclass").info(
+                    "语音播报：音量 %s，音色 %s", speak_volume, speak_voice or "默认"
+                )
+                voice_mod.speak(
+                    f"{title}。{body}" if title else body,
+                    volume=speak_volume,
+                    rate=speak_rate,
+                    voice=speak_voice,
+                )
+            except Exception:
+                pass
+
         # 先把铃声响起来（异步，不挡窗口）
         try:
             from . import sounds as sounds_mod
@@ -661,6 +686,27 @@ def cmd_elevate_self(args: dict) -> tuple[bool, str]:
     return True, "正在以管理员身份重启，请在弹出来的窗口里点「是」"
 
 
+def cmd_speak(args: dict) -> tuple[bool, str]:
+    """只播报，不弹窗（管理页面的「试听」用）"""
+    from . import voice as voice_mod
+
+    text = str(args.get("text") or args.get("body") or "").strip()
+    if not text:
+        return False, "要念什么呢？"
+    volume = _int_or(args.get("voiceVolume"), 100, 0, 100)
+    rate = _int_or(args.get("voiceRate"), 0, -10, 10)
+    return voice_mod.speak(text, volume=volume, rate=rate, voice=str(args.get("voiceName") or ""))
+
+
+def cmd_voice_list(args: dict) -> tuple[bool, str]:
+    """这台机器上有哪些音色（页面拿来填下拉框）"""
+    import json as _json
+
+    from . import voice as voice_mod
+
+    return True, _json.dumps(voice_mod.status(), ensure_ascii=False)
+
+
 def cmd_restart_client(args: dict) -> tuple[bool, str]:
     """重启客户端本身（托盘那个），不是重启电脑。
 
@@ -743,6 +789,8 @@ REGISTRY = {
     "net_ban": cmd_net_ban,
     "net_allow": cmd_net_allow,
     "restart_client": cmd_restart_client,
+    "speak": cmd_speak,
+    "voice_list": cmd_voice_list,
     "elevate_self": cmd_elevate_self,
     "net_ban_lift": cmd_net_allow,
     "screenshot": cmd_screenshot,

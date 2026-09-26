@@ -740,6 +740,18 @@ PAGE = """<!doctype html>
         <input type="checkbox" id="ntFit"><span>自适应窗口最大（把文字按比例拉到屏幕能放的最大）</span>
       </label>
 
+      <p class="nt-label">语音播报</p>
+      <div class="cmd-row">
+        <label class="nt-row" style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="ntVoice"> 念出来
+        </label>
+        <span class="muted tiny">音量</span>
+        <input type="range" id="ntVoiceVol" min="0" max="100" value="100" style="flex:1">
+        <span class="mono" id="ntVoiceVolText" style="min-width:34px">100</span>
+        <select class="nt-input" id="ntVoiceName" style="max-width:230px"></select>
+        <button class="btn" id="ntVoiceTest">试听</button>
+      </div>
+
       <p class="nt-label">铃声</p>
       <div class="cmd-row">
         <select class="nt-input" id="ntSound" style="flex:1">
@@ -1647,6 +1659,7 @@ async function askQuiet(text) {
 function openNotice() {
   $('ntMask').classList.remove('hidden');
   loadSounds($('ntSound'));
+  loadVoices();
 }
 
 $('ntSoundTest').onclick = async () => {
@@ -1686,6 +1699,41 @@ async function uploadSound(file) {
   return res.ok;
 }
 
+// 语音播报：音色从客户端问，音量滑条实时显示
+async function loadVoices() {
+  const sel = document.getElementById('ntVoiceName');
+  if (!sel) return;
+  const { data } = await api('/api/command', { command: 'voice_list', args: {} });
+  let info = null;
+  try { info = JSON.parse((data && data.output) || '{}'); } catch (_) { info = null; }
+  const list = (info && info.voices) || [];
+  sel.innerHTML = list
+    .map((v) => `<option value="${v.name}"${v.chinese ? ' selected' : ''}>${v.name}</option>`)
+    .join('') || '<option value="">（这台机器没有可用音色）</option>';
+}
+
+function voiceArgs() {
+  return {
+    voice: document.getElementById('ntVoice').checked,
+    voiceVolume: Number(document.getElementById('ntVoiceVol').value) || 0,
+    voiceName: document.getElementById('ntVoiceName').value || '',
+  };
+}
+
+document.getElementById('ntVoiceVol').addEventListener('input', (e) => {
+  document.getElementById('ntVoiceVolText').textContent = e.target.value;
+});
+
+document.getElementById('ntVoiceTest').onclick = async () => {
+  const text = document.getElementById('ntBody').value.trim() || '这是一条语音播报试听';
+  const args = voiceArgs();
+  const { data } = await api('/api/command', {
+    command: 'speak',
+    args: { text, voiceVolume: args.voiceVolume, voiceName: args.voiceName },
+  });
+  logEvent(`试听：${(data && data.output) || '发了'}`, !(data && data.ok));
+};
+
 function noticeArgs() {
   const opts = [];
   for (let i = 0; i < 3; i++) {
@@ -1706,6 +1754,9 @@ function noticeArgs() {
     autoFit: $('ntFit').checked,
     autoClose: $('ntAuto').checked ? (Number($('ntAutoSec').value) || 0) : 0,
     sound: $('ntSound').value || '',
+    voice: $('ntVoice').checked,
+    voiceVolume: Number($('ntVoiceVol').value) || 0,
+    voiceName: $('ntVoiceName').value || '',
     size: { w: num('ntW', 520), h: num('ntH', 300) },
     fontSize: { title: num('ntFT', 16), body: num('ntFB', 12), button: num('ntFBtn', 10) },
     options: opts,
