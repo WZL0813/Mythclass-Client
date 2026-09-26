@@ -427,6 +427,7 @@ class MythclassClient:
         {"key": "netBanAutoLiftMinutes", "label": "禁止上网几分钟后自动放开（0 = 不自动）",
          "type": "number", "min": 0, "max": 1440},
         {"key": "autoUpdate", "label": "自动更新", "type": "bool"},
+        {"key": "updateNotify", "label": "更新时弹提示", "type": "bool"},
         {"key": "noticeSpeak", "label": "发通知时默认语音播报", "type": "bool"},
         {"key": "noticeVolume", "label": "播报音量（0-100）", "type": "number", "min": 0, "max": 100},
         {"key": "noticeVoice", "label": "播报音色（留空用默认中文音色）", "type": "text"},
@@ -960,6 +961,26 @@ class MythclassClient:
                 self.log(f"更新执行器：{_why}")
         except Exception as err:
             self.log(f"建提权自启失败：{err}", logging.WARNING)
+
+        # 刚更新完？报一声（受「更新时弹提示」控制）
+        def _say_update_done() -> None:
+            try:
+                time.sleep(4)  # 等托盘起来，免得提示比窗口还早
+                done = updater_mod.take_update_done()
+                if not done:
+                    return
+                self.log(f"更新完成：已更新到 v{done}")
+                if not self.cfg.get("updateNotify", True):
+                    return
+                import tkinter as _tk  # noqa: F401  （ui 里有现成的）
+
+                from . import ui as _ui
+
+                _ui.toast_note(f"更新完成：已经更新到 v{done}，一切正常。")
+            except Exception as err:
+                self.log(f"更新完成提示失败：{err}", logging.WARNING)
+
+        threading.Thread(target=_say_update_done, daemon=True).start()
 
         # 自动检查更新：后台慢慢来，不挡启动
         threading.Thread(target=self._auto_update_loop, daemon=True).start()

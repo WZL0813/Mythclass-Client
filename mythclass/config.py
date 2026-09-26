@@ -45,6 +45,7 @@ DEFAULTS = {
     "watchDirs": [],
     # 自动更新：默认开着，有新版自己下自己装
     "autoUpdate": True,
+    "updateNotify": True,   # 检测到更新 / 开始更新时弹提示
     "lastUpdateCheck": "",
     "maxLogCount": 5000,
     "maxLogSize": 209715200,

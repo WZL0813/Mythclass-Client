@@ -21,10 +21,14 @@ MOSS = "#2f4f3e"
 AMBER = "#c97b3c"
 
 
-def _center(window: tk.Tk, width: int, height: int) -> None:
+def _center(window: tk.Tk, width: int, height: int,
+           x: int | None = None, y: int | None = None) -> None:
+    """居中；给了 x/y 就用给的（小提示要贴右上角）"""
     window.update_idletasks()
-    x = (window.winfo_screenwidth() - width) // 2
-    y = (window.winfo_screenheight() - height) // 3
+    if x is None:
+        x = (window.winfo_screenwidth() - width) // 2
+    if y is None:
+        y = (window.winfo_screenheight() - height) // 3
     window.geometry(f"{width}x{height}+{x}+{y}")
 
 
@@ -390,6 +394,40 @@ def open_settings_async(cfg: dict, client_uid: str, on_save) -> None:
 
     threading.Thread(target=run, name="mythclass-settings", daemon=True).start()
 
+def toast_note(text: str, seconds: float = 9.0) -> None:
+    """右上角一个小提示，几秒后自己消失。
+
+    给"发现更新""开始更新"这种用 —— 绝不能挡流程：
+    ui_result 是模态的，会一直等人点，自动更新就卡住了。
+    """
+    import threading
+
+    def show() -> None:
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            box = tk.Toplevel(root)
+            box.title("Mythclass")
+            box.configure(bg=BG)
+            box.attributes("-topmost", True)
+            # 贴在屏幕右上角，不挡中间的活儿
+            sw = box.winfo_screenwidth()
+            _center(box, 420, 170, x=sw - 450, y=60)
+            pad = tk.Frame(box, bg=BG, padx=18, pady=16)
+            pad.pack(fill="both", expand=True)
+            tk.Label(pad, text="Mythclass", bg=BG, fg=MOSS,
+                     font=("Microsoft YaHei", 11, "bold")).pack(anchor="w")
+            tk.Message(pad, text=text, bg=BG, fg=INK, width=380,
+                       font=("Microsoft YaHei", 10)).pack(anchor="w", pady=(8, 0))
+            box.after(int(max(2.0, seconds) * 1000), lambda: (box.destroy(), root.destroy()))
+            root.mainloop()
+        except Exception:
+            pass
+
+    threading.Thread(target=show, daemon=True).start()
+
+
 def _open_in_explorer(path) -> None:
     """在资源管理器里选中这个文件（找不到目录就开目录）"""
     import subprocess
@@ -441,6 +479,22 @@ def _reinstall_prompt(path, retry) -> None:
     root.mainloop()
 
 
+def _update_notify(cfg, text: str) -> None:
+    """更新相关的提示：受设置 updateNotify 控制，记一条日志方便排查
+
+    非模态、几秒自己消失 —— 不能挡住更新流程。
+    """
+    if not (cfg or {}).get("updateNotify", True):
+        return
+    try:
+        import logging
+
+        logging.getLogger("mythclass").info("更新提示：%s", text)
+    except Exception:
+        pass
+    toast_note(text)
+
+
 def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
     """检查更新。
 
@@ -490,6 +544,10 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
                 why = (up.LAST_ERROR[0] if getattr(up, "LAST_ERROR", None) else "") or "不知道原因"
                 ui_result("下载没成功：\n" + why + "\n\n下载地址：\n" + (info_dict.get("url") or "（服务端没给地址）"))
                 return
+            _update_notify(
+                cfg,
+                f"正在更新到 v{info_dict.get('latest')}，客户端会自己重启，装完就回来。",
+            )
             if up.run_installer(path):
                 # 装完应该自己回来；再挂一个兜底，免得更新完机器上没客户端
                 up.schedule_relaunch(45)
@@ -530,6 +588,13 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
         text = (f"有新版啦：v{info.get('current')} → v{info.get('latest')}\n\n"
                 f"{notes}")
         if auto or info.get("mandatory"):
+            if auto:
+                # 自动这条路平时是静默的，主人要能看见「它要更新了」
+                _update_notify(
+                    cfg,
+                    f"检测到新版本：v{info.get('current')} → v{info.get('latest')}，"
+                    f"正在后台准备，开始安装时会再提示一次。",
+                )
             do_install(info)
         else:
             ui_result(text, offer=lambda: do_install(info))

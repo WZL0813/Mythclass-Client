@@ -367,6 +367,37 @@ def _run_apply_task(path: Path) -> tuple[bool, str]:
         return False, f"任务没跑起来：{type(err).__name__}: {err}"
 
 
+def take_update_done() -> str | None:
+    """启动时问一句：刚才是刚更新完吗？
+
+    是就返回"更新到哪个版本"，并把记录清掉（只提示一次）。
+    不是（没记录，或者自己版本还比记录低）就返回 None。
+    """
+    note = pending_path()
+    if not note.exists():
+        return None
+    try:
+        info = json.loads(note.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    want = str(info.get("version") or "").strip()
+    if not want:
+        return None
+    if not is_newer(want, __version__) and want != __version__:
+        # 记录里的版本没有比当前更高——要么已经追平，要么当前更高
+        pass
+    if is_newer(want, __version__):
+        # 目标版本比自己还新 → 没装成，记录留着
+        return None
+
+    try:
+        note.unlink()
+    except Exception:
+        pass
+    return want
+
+
 def apply_pending_update() -> tuple[bool, str]:
     """以管理员身份被拉起来时执行：核对服务端的 sha256，然后装。
 
@@ -496,6 +527,20 @@ def run_installer(path: Path) -> bool:
     2. 自己就是管理员 → 直接开
     3. 退回 runas（弹 UAC，教室里可能没人点）
     """
+    # 记下「要装到哪个版本」—— 新客户端起来后会靠它报「更新完成」
+    try:
+        _latest = ""
+        try:
+            from . import config as _config
+    
+            _info = check(_config.load(), timeout=6.0)
+            _latest = str((_info or {}).get("latest") or "")
+        except Exception:
+            _latest = ""
+        write_pending(path, _latest)
+    except Exception:
+        pass
+    
     LAST_ERROR[:] = [""]
     if os.name != "nt":
         LAST_ERROR[:] = ["只有 Windows 需要"]
