@@ -29,8 +29,14 @@ def sounds_dir() -> Path:
     return folder
 
 
+# 内置铃声：跟着安装包一起发出去，别的机器上也有（W: 那个盘不是每台都有）
+BUILTIN_PATH = Path(__file__).with_name("assets") / "notice.wav"
+
+
 def default_path() -> Path | None:
-    """默认铃声（主人指定的那个，不在就算了）"""
+    """默认铃声：先用内置的；没有就退回主人指定的那个路径"""
+    if BUILTIN_PATH.is_file():
+        return BUILTIN_PATH
     p = Path(DEFAULT_PATH)
     return p if p.is_file() else None
 
