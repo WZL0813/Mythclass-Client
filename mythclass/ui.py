@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import os
+
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -388,6 +390,57 @@ def open_settings_async(cfg: dict, client_uid: str, on_save) -> None:
 
     threading.Thread(target=run, name="mythclass-settings", daemon=True).start()
 
+def _open_in_explorer(path) -> None:
+    """在资源管理器里选中这个文件（找不到目录就开目录）"""
+    import subprocess
+
+    try:
+        p = str(path)
+        if os.path.isfile(p):
+            subprocess.Popen(["explorer", "/select,", p])
+        else:
+            folder = os.path.dirname(p) or p
+            if os.path.isdir(folder):
+                subprocess.Popen(["explorer", folder])
+    except Exception:
+        pass
+
+
+def _reinstall_prompt(path, retry) -> None:
+    """装不起来时，给一个「再试一次」的窗口（教室那台机器前面的人可以点）"""
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    box = tk.Toplevel(root)
+    box.title("客户端需要更新")
+    box.configure(bg=BG)
+    box.attributes("-topmost", True)
+    _center(box, 520, 330)
+    pad = tk.Frame(box, bg=BG, padx=22, pady=20)
+    pad.pack(fill="both", expand=True)
+    tk.Label(pad, text="客户端需要更新", bg=BG, fg=MOSS,
+             font=("Microsoft YaHei", 13, "bold")).pack(anchor="w")
+    tk.Message(
+        pad,
+        text=("新版本已经下好了，但自动安装需要管理员权限。\n"
+              "请点下面的「现在更新」；弹出来的窗口（用户账户控制）里点「是」。\n\n"
+              f"也可以自己双击这个文件：\n{path}"),
+        bg=BG, fg=INK, width=470, font=("Microsoft YaHei", 10),
+    ).pack(anchor="w", pady=(12, 14))
+    bar = tk.Frame(pad, bg=BG)
+    bar.pack(fill="x", side="bottom")
+    tk.Button(bar, text="现在更新", command=lambda: retry(),
+              bg=MOSS, fg=BG, relief="flat", padx=16, pady=6,
+              font=("Microsoft YaHei", 10), cursor="hand2").pack(side="right")
+    tk.Button(bar, text="打开所在文件夹", command=lambda: _open_in_explorer(path),
+              bg="#d8d2c2", fg=INK, relief="flat", padx=14, pady=6,
+              font=("Microsoft YaHei", 10), cursor="hand2").pack(side="right", padx=8)
+    tk.Button(bar, text="稍后", command=lambda: (box.destroy(), root.destroy()),
+              bg="#d8d2c2", fg=INK, relief="flat", padx=14, pady=6,
+              font=("Microsoft YaHei", 10), cursor="hand2").pack(side="left")
+    root.mainloop()
+
+
 def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
     """检查更新。
 
@@ -444,7 +497,15 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
                           "要是过两分钟还没看到托盘图标，手动开一下就行。")
                 up.restart_soon(1.5)
             else:
-                ui_result(f"安装包下好了，放在：\n{path}\n但我起不来它（可能你点了取消 UAC）。手动双击也行。")
+                why = (up.LAST_ERROR[0] if getattr(up, "LAST_ERROR", None) else "") or "不知道原因"
+                # 教室那台机器前面可能有人 —— 给个能点的窗口，别只留一句话
+                if info_dict.get("mandatory"):
+                    _reinstall_prompt(path, lambda: do_install(info_dict))
+                else:
+                    ui_result(
+                        "安装包下好了，放在：\n" + str(path) + "\n\n自动装不上，试过的路：\n" + why,
+                        offer=lambda: do_install(info_dict),
+                    )
 
         if info is None:
             if not silent:

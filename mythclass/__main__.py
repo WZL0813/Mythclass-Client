@@ -770,6 +770,13 @@ class MythclassClient:
             made, why = guard.ensure_elevated_autostart()
             if made:
                 self.log(f"提权自启：{why}")
+
+            # 更新执行器：只要是管理员就建一个，以后自动更新不用弹 UAC
+            from . import updater as _up  # noqa: E402
+
+            if _up.is_admin():
+                _ok, _why = _up.ensure_apply_task()
+                self.log(f"更新执行器：{_why}")
         except Exception as err:
             self.log(f"建提权自启失败：{err}", logging.WARNING)
 

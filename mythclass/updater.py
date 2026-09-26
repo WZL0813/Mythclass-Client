@@ -115,7 +115,10 @@ def download(url: str, sha256: str = "", on_progress=None, timeout: float = 600.
     name = url.split("/")[-1].split("?")[0] or "MythclassSetup.exe"
     if not name.lower().endswith(".exe"):
         name += ".exe"
-    dest = Path(tempfile.gettempdir()) / name
+        name = Path(url.split("?")[0]).name or f"MythclassSetup-{__version__}.exe"
+    if not name.lower().endswith(".exe"):
+        name = f"MythclassSetup-{__version__}.exe"
+    dest = update_dir() / name
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": f"MythclassClient/{__version__}"})
@@ -150,22 +153,224 @@ def download(url: str, sha256: str = "", on_progress=None, timeout: float = 600.
     return dest
 
 
-def run_installer(path: Path) -> bool:
-    """带管理员权限跑安装包。装到 Program Files 要提权，所以走 runas"""
+def update_dir() -> Path:
+    """安装包下到这儿，别丢在 Temp（Temp 会被清，手动双击也不好找）"""
     try:
-        if os.name != "nt":
-            return False
+        from . import config
+
+        folder = config.APP_DIR / "update"
+    except Exception:
+        import tempfile
+
+        folder = Path(tempfile.gettempdir()) / "Mythclass"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+# ---------------------------------------------------------------- 免 UAC 更新
+
+# 安装时（提权那次）建好这个任务；以后更新让任务去跑，就不弹 UAC 了
+UPDATE_TASK = "MythclassApplyUpdate"
+
+
+def apply_cmd_path() -> Path:
+    """更新脚本放在用户自己目录下（和下载的安装包同一个文件夹）。
+
+    为什么不用 C: 下的 ProgramData：更新的时候客户端正是"非管理员"身份，
+    那个目录普通用户写不进去，整条免 UAC 的路就死了。
+    计划任务是以"同一个用户的最高权限"跑的，读用户自己的目录没问题。
+    """
+    return update_dir() / "apply-update.cmd"
+
+
+# ShellExecuteW 的错误码，说人话（不然只丢个数字，没法跟主人解释）
+SHELL_ERRORS = {
+    0: "系统内存或资源不够",
+    2: "找不到这个文件",
+    3: "找不到这个路径",
+    5: "拒绝访问（UAC 被拒绝或被策略挡住）",
+    8: "内存不够",
+    26: "文件共享冲突",
+    27: "文件关联不完整",
+    28: "DDE 超时",
+    29: "DDE 失败",
+    30: "DDE 忙",
+    31: "没有关联的程序",
+    32: "DLL 问题",
+}
+
+
+def is_admin() -> bool:
+    """现在是不是管理员身份"""
+    try:
         import ctypes
 
-        # ShellExecuteW 的 runas：弹 UAC，用户点了同意才开始装
-        # 注意：**不能**加 --nolaunch —— 安装器装完会先把旧客户端杀掉，
-        # 不许它启动新的，机器上就没客户端了，要等下次登录才自启。
-        result = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", str(path), "--silent --noelevate", None, 1
-        )
-        return int(result) > 32
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except Exception:
         return False
+
+
+def _task_xml(arguments: str) -> str:
+    """更新执行器的任务定义：交互登录 + 最高权限（不需要存密码）"""
+    who = (os.environ.get("USERDOMAIN") or "") + "\\" + (os.environ.get("USERNAME") or "")
+    who = who.strip("\\")
+    return f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Mythclass 更新执行器（最高权限，不弹 UAC）</Description></RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{who}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author">
+    <Exec><Command>cmd.exe</Command><Arguments>/c "{apply_cmd_path()}"</Arguments></Exec>
+  </Actions>
+</Task>
+"""
+
+
+def ensure_apply_task() -> tuple[bool, str]:
+    """建「最高权限跑更新脚本」的计划任务（要管理员，装完那次顺手建）
+
+    这是自动更新不再弹 UAC 的关键：任务以 HighestAvailable 跑，
+    而**运行一个已经存在的任务不需要管理员权限**。
+    """
+    if os.name != "nt":
+        return False, "只有 Windows 需要"
+    if not is_admin():
+        return False, "现在不是管理员身份，建不了（安装程序那次会建）"
+
+    try:
+        cmd_path = apply_cmd_path()
+        cmd_path.parent.mkdir(parents=True, exist_ok=True)
+        if not cmd_path.exists():
+            cmd_path.write_text("@echo off\r\nrem 由客户端写入要执行的更新命令\r\n", encoding="utf-8")
+    except Exception as err:
+        return False, f"更新脚本目录建不了：{err}"
+
+    tmp = Path(tempfile.gettempdir()) / "mythclass-update-task.xml"
+    try:
+        tmp.write_text(_task_xml(""), encoding="utf-16")
+    except Exception as err:
+        return False, f"写任务定义失败：{err}"
+
+    try:
+        done = subprocess.run(
+            ["schtasks", "/Create", "/TN", UPDATE_TASK, "/XML", str(tmp), "/F"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if done.returncode == 0:
+            return True, "更新执行器建好了（以后更新不弹 UAC）"
+        return False, f"建任务失败：{(done.stderr or done.stdout or '').strip()[:160]}"
+    except Exception as err:
+        return False, f"建任务失败：{type(err).__name__}: {err}"
+    finally:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+
+
+def _run_apply_task(path: Path) -> tuple[bool, str]:
+    """把要装的包写进脚本，让计划任务以最高权限去跑（不弹 UAC）"""
+    if os.name != "nt":
+        return False, "只有 Windows 需要"
+    try:
+        cmd_path = apply_cmd_path()
+        cmd_path.parent.mkdir(parents=True, exist_ok=True)
+        cmd_path.write_text(
+            "@echo off\r\n"
+            "rem Mythclass 自动更新：由客户端写入，计划任务以最高权限执行\r\n"
+            f'"{path}" --silent --noelevate\r\n',
+            encoding="utf-8",
+        )
+    except Exception as err:
+        return False, f"写更新脚本失败：{type(err).__name__}"
+
+    try:
+        done = subprocess.run(
+            ["schtasks", "/Run", "/TN", UPDATE_TASK],
+            capture_output=True, text=True, timeout=30,
+        )
+        if done.returncode == 0:
+            return True, "已交给最高权限的更新执行器"
+        return False, f"任务没跑起来：{(done.stderr or done.stdout or '').strip()[:100]}"
+    except Exception as err:
+        return False, f"任务没跑起来：{type(err).__name__}: {err}"
+
+
+def _open_direct(path: Path) -> tuple[bool, str]:
+    """直接开（自己已经是管理员时不会弹 UAC）"""
+    if os.name != "nt":
+        return False, "只有 Windows 需要"
+    import ctypes
+
+    result = int(ctypes.windll.shell32.ShellExecuteW(None, "open", str(path), "--silent --noelevate", None, 1))
+    if result > 32:
+        return True, "已经起来了"
+    return False, SHELL_ERRORS.get(result, f"错误码 {result}")
+
+
+def _open_runas(path: Path) -> tuple[bool, str]:
+    """提权开（会弹 UAC，需要有人在机器前点「是」）"""
+    if os.name != "nt":
+        return False, "只有 Windows 需要"
+    import ctypes
+
+    result = int(ctypes.windll.shell32.ShellExecuteW(None, "runas", str(path), "--silent --noelevate", None, 1))
+    if result > 32:
+        return True, "已经起来了（UAC 已同意）"
+    return False, SHELL_ERRORS.get(result, f"错误码 {result}")
+
+
+def run_installer(path: Path) -> bool:
+    """跑安装包。按「最不打扰人」的顺序试三条路，并把原因记下来。
+
+    1. 计划任务（最高权限，不弹 UAC）—— 装的时候建好，之后一直能用
+    2. 自己就是管理员 → 直接开
+    3. 退回 runas（弹 UAC，教室里可能没人点）
+    """
+    LAST_ERROR[:] = [""]
+    if os.name != "nt":
+        LAST_ERROR[:] = ["只有 Windows 需要"]
+        return False
+
+    tried: list[str] = []
+
+    if is_admin():
+        # 顺手把更新执行器补上，下次就不用弹 UAC 了
+        made, why = ensure_apply_task()
+        tried.append(f"建更新执行器：{why}" if made else f"建更新执行器没成：{why}")
+
+    done, why = _run_apply_task(path)
+    tried.append(f"计划任务：{why}")
+    if done:
+        return True
+
+    if is_admin():
+        done, why = _open_direct(path)
+        tried.append(f"直接开（管理员）：{why}")
+        if done:
+            return True
+
+    done, why = _open_runas(path)
+    tried.append(f"提权开（会弹 UAC）：{why}")
+    if done:
+        return True
+
+    LAST_ERROR[:] = ["\n".join(tried)]
+    return False
 
 
 def schedule_relaunch(delay: float = 45.0) -> None:
