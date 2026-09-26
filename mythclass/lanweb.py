@@ -595,6 +595,18 @@ PAGE = """<!doctype html>
   .set-row .tip { color: #7d8f7a; font-size: 12px; }
   .set-row.wide { grid-template-columns: 1fr; }
 
+  .vo-order { display: flex; gap: 8px; flex-wrap: wrap; }
+  .vo-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: 9px;
+    border: 1px solid #2b3a2d; background: #141c16; color: #dfe6d8; font-size: 13px;
+    cursor: grab;
+  }
+  .vo-item.dragging { opacity: 0.45; }
+  .vo-item.over { border-color: #7fae7a; }
+  .vo-no { color: #7d8f7a; font-size: 12px; }
+  .vo-grip { color: #6f8a6b; cursor: grab; padding: 0 2px; user-select: none; }
+
   /* 屏幕区 */
   .screen-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
   .btn {
@@ -745,6 +757,26 @@ PAGE = """<!doctype html>
         <label class="nt-row" style="display:flex;align-items:center;gap:6px">
           <input type="checkbox" id="ntVoice"> 念出来
         </label>
+        <span class="muted tiny">念哪些</span>
+        <label class="nt-row" style="display:flex;align-items:center;gap:4px">
+          <input type="checkbox" id="ntVoiceTitle" checked> 标题
+        </label>
+        <label class="nt-row" style="display:flex;align-items:center;gap:4px">
+          <input type="checkbox" id="ntVoiceContent" checked> 内容
+        </label>
+      </div>
+      <div class="cmd-row">
+        <span class="muted tiny">顺序（拖右边的把手）</span>
+        <div class="vo-order" id="ntVoiceOrder">
+          <div class="vo-item" draggable="true" data-part="title">
+            <span class="vo-no">1</span><span>标题</span><span class="vo-grip" title="拖我换顺序">≡</span>
+          </div>
+          <div class="vo-item" draggable="true" data-part="content">
+            <span class="vo-no">2</span><span>内容</span><span class="vo-grip" title="拖我换顺序">≡</span>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-row">
         <span class="muted tiny">音量</span>
         <input type="range" id="ntVoiceVol" min="0" max="100" value="100" style="flex:1">
         <span class="mono" id="ntVoiceVolText" style="min-width:34px">100</span>
@@ -1660,6 +1692,7 @@ function openNotice() {
   $('ntMask').classList.remove('hidden');
   loadSounds($('ntSound'));
   loadVoices();
+  wireVoiceDrag();
 }
 
 $('ntSoundTest').onclick = async () => {
@@ -1712,11 +1745,66 @@ async function loadVoices() {
     .join('') || '<option value="">（这台机器没有可用音色）</option>';
 }
 
+// 语音：念哪些 + 顺序
+function voiceParts() {
+  const out = [];
+  if (document.getElementById('ntVoiceTitle').checked) out.push('title');
+  if (document.getElementById('ntVoiceContent').checked) out.push('content');
+  return out;
+}
+
+function voiceOrder() {
+  return [...document.querySelectorAll('#ntVoiceOrder .vo-item')].map((el) => el.dataset.part);
+}
+
+function renumberVoice() {
+  document.querySelectorAll('#ntVoiceOrder .vo-item').forEach((el, i) => {
+    const no = el.querySelector('.vo-no');
+    if (no) no.textContent = String(i + 1);
+  });
+}
+
+// 拖动换顺序（原生 HTML5 拖放，不依赖任何库）
+function wireVoiceDrag() {
+  const box = document.getElementById('ntVoiceOrder');
+  if (!box || box.dataset.wired) return;
+  box.dataset.wired = '1';
+  let dragging = null;
+  box.querySelectorAll('.vo-item').forEach((el) => {
+    el.addEventListener('dragstart', () => {
+      dragging = el;
+      el.classList.add('dragging');
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      box.querySelectorAll('.vo-item').forEach((x) => x.classList.remove('over'));
+      dragging = null;
+      renumberVoice();
+    });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (!dragging || dragging === el) return;
+      el.classList.add('over');
+      const rect = el.getBoundingClientRect();
+      const after = (e.clientY - rect.top) > rect.height / 2;
+      box.insertBefore(dragging, after ? el.nextSibling : el);
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('over'));
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('over');
+      renumberVoice();
+    });
+  });
+}
+
 function voiceArgs() {
   return {
     voice: document.getElementById('ntVoice').checked,
     voiceVolume: Number(document.getElementById('ntVoiceVol').value) || 0,
     voiceName: document.getElementById('ntVoiceName').value || '',
+    voiceParts: voiceParts(),
+    voiceOrder: voiceOrder(),
   };
 }
 
@@ -1725,11 +1813,19 @@ document.getElementById('ntVoiceVol').addEventListener('input', (e) => {
 });
 
 document.getElementById('ntVoiceTest').onclick = async () => {
-  const text = document.getElementById('ntBody').value.trim() || '这是一条语音播报试听';
   const args = voiceArgs();
+  const title = (document.getElementById('ntTitle') || {}).value || '';
+  const body = document.getElementById('ntBody').value.trim() || '这是一条语音播报试听';
   const { data } = await api('/api/command', {
     command: 'speak',
-    args: { text, voiceVolume: args.voiceVolume, voiceName: args.voiceName },
+    args: {
+      title,
+      body,
+      voiceParts: args.voiceParts,
+      voiceOrder: args.voiceOrder,
+      voiceVolume: args.voiceVolume,
+      voiceName: args.voiceName,
+    },
   });
   logEvent(`试听：${(data && data.output) || '发了'}`, !(data && data.ok));
 };
@@ -1757,6 +1853,8 @@ function noticeArgs() {
     voice: $('ntVoice').checked,
     voiceVolume: Number($('ntVoiceVol').value) || 0,
     voiceName: $('ntVoiceName').value || '',
+    voiceParts: voiceParts(),
+    voiceOrder: voiceOrder(),
     size: { w: num('ntW', 520), h: num('ntH', 300) },
     fontSize: { title: num('ntFT', 16), body: num('ntFB', 12), button: num('ntFBtn', 10) },
     options: opts,

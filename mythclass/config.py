@@ -52,6 +52,8 @@ DEFAULTS = {
     "noticeSpeak": False,
     "noticeVolume": 100,       # 播报音量 0-100
     "noticeVoice": "",         # 空 = 用默认（优先中文音色）
+    "noticeVoiceParts": ["title", "content"],   # 念哪些
+    "noticeVoiceOrder": ["title", "content"],   # 先念哪个
     "screenFps": 12,
     "screenQuality": 60,
 }

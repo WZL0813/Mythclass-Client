@@ -156,6 +156,8 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
     speak_volume = _int_or(args.get("voiceVolume"), 100, 0, 100)
     speak_rate = _int_or(args.get("voiceRate"), 0, -10, 10)
     speak_voice = str(args.get("voiceName") or "")
+    speak_parts = args.get("voiceParts")   # 勾了哪些（None = 没给，用默认；[] = 都不念）
+    speak_order = args.get("voiceOrder")   # 先念哪个
 
     size = args.get("size") or {}
     win_w = _int_or(size.get("w"), 520, 320, 2400)
@@ -178,11 +180,15 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
 
                 from . import voice as voice_mod
 
+                said = _voice_text(title, body, speak_parts, speak_order)
                 _logging.getLogger("mythclass").info(
-                    "语音播报：音量 %s，音色 %s", speak_volume, speak_voice or "默认"
+                    "语音播报：音量 %s，音色 %s，念「%s」",
+                    speak_volume,
+                    speak_voice or "默认",
+                    said,
                 )
                 voice_mod.speak(
-                    f"{title}。{body}" if title else body,
+                    said,
                     volume=speak_volume,
                     rate=speak_rate,
                     voice=speak_voice,
@@ -686,15 +692,51 @@ def cmd_elevate_self(args: dict) -> tuple[bool, str]:
     return True, "正在以管理员身份重启，请在弹出来的窗口里点「是」"
 
 
+def _voice_text(title: str, body: str, parts, order) -> str:
+    """按「念哪些 + 什么顺序」拼出要念的话。
+
+    parts：勾了哪些（title / content）
+    order：先念哪个（["title", "content"] 就是先标题）
+    """
+    names = {"title": title, "content": body}
+    # 注意：空列表是"明确什么都不念"，None 才是"没给、按默认"
+    want = ["title", "content"] if parts is None else [str(x) for x in parts]
+    seq = ["title", "content"] if order is None else [str(x) for x in order]
+    # order 里没提到的（万一前端漏了）补在后面，别让人家勾了却不念
+    for key in want:
+        if key not in seq:
+            seq.append(key)
+
+    pieces: list[str] = []
+    for key in seq:
+        if key not in want:
+            continue
+        text = str(names.get(key) or "").strip()
+        if text:
+            pieces.append(text)
+    return "。".join(pieces)
+
+
 def cmd_speak(args: dict) -> tuple[bool, str]:
     """只播报，不弹窗（管理页面的「试听」用）"""
     from . import voice as voice_mod
 
-    text = str(args.get("text") or args.get("body") or "").strip()
+    # 试听可以只给 text，也可以给「标题 + 内容 + 念哪些 + 顺序」，由这边统一拼
+    text = _voice_text(
+        str(args.get("title") or ""),
+        str(args.get("body") or args.get("text") or ""),
+        args.get("voiceParts"),
+        args.get("voiceOrder"),
+    )
     if not text:
         return False, "要念什么呢？"
     volume = _int_or(args.get("voiceVolume"), 100, 0, 100)
     rate = _int_or(args.get("voiceRate"), 0, -10, 10)
+    import logging as _logging
+
+    _logging.getLogger("mythclass").info(
+        "语音播报：音量 %s，音色 %s，念「%s」", volume, str(args.get("voiceName") or "默认"), text
+    )
     return voice_mod.speak(text, volume=volume, rate=rate, voice=str(args.get("voiceName") or ""))
 
 
