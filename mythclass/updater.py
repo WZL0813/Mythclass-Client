@@ -140,6 +140,40 @@ def download(url: str, sha256: str = "", on_progress=None, timeout: float = 600.
         LAST_ERROR[:] = [f"{type(err).__name__}: {err}"]
         return None
 
+    # 不管有没有 sha256，都要确认下下来的**真的是个 exe**。
+    # 曾经出现过下载地址返回 HTML（页面）的情况：文件被当成安装包跑，
+    # Windows 弹「此应用无法在你的电脑上运行」，还不容易看出为什么。
+    try:
+        size = dest.stat().st_size
+        head = dest.open("rb").read(2)
+    except Exception as err:
+        LAST_ERROR[:] = [f"下载完读不了：{type(err).__name__}: {err}"]
+        return None
+
+    if head != b"MZ":
+        try:
+            snippet = dest.open("rb").read(120).decode("utf-8", errors="replace").replace("\n", " ")
+        except Exception:
+            snippet = ""
+        try:
+            dest.unlink()
+        except Exception:
+            pass
+        LAST_ERROR[:] = [
+            f"下下来的不是安装包（{size} 字节，开头是 {head!r}）\n"
+            f"内容开头：{snippet[:100]}\n"
+            f"多半是下载地址不对或者服务端没给到这个文件。"
+        ]
+        return None
+
+    if size < 1024 * 1024:
+        try:
+            dest.unlink()
+        except Exception:
+            pass
+        LAST_ERROR[:] = [f"下下来的文件太小（{size} 字节），不像安装包，已删掉。"]
+        return None
+
     if sha256:
         actual = digest.hexdigest().lower()
         if actual != sha256.strip().lower():
