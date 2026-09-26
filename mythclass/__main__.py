@@ -172,6 +172,14 @@ class MythclassClient:
         self.web.sound_list = _sound_list
         self.web.save_sound = _save_sound
         self.web.play_sound = _play_sound
+        # 更新提示走 Windows 系统通知（托盘气泡），跟「已连上服务端」那种一样
+        try:
+            from . import ui as _ui
+
+            _ui.set_notifier(self.tray.notify)
+        except Exception:
+            pass
+
         self.web.settings_view = lambda: {
             "name": self.cfg.get("clientName") or "教室一体机",
             "clientUid": self.client_uid,
@@ -975,11 +983,9 @@ class MythclassClient:
                 self.log(f"更新完成：已更新到 v{done}")
                 if not self.cfg.get("updateNotify", True):
                     return
-                import tkinter as _tk  # noqa: F401  （ui 里有现成的）
-
                 from . import ui as _ui
 
-                _ui.toast_note(f"更新完成：已经更新到 v{done}，一切正常。")
+                _ui.notify(f"更新完成：已经更新到 v{done}，一切正常。")
             except Exception as err:
                 self.log(f"更新完成提示失败：{err}", logging.WARNING)
 

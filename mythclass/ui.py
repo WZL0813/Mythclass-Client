@@ -489,6 +489,30 @@ def _reinstall_prompt(path, retry) -> None:
     root.mainloop()
 
 
+# 系统通知（Windows 气泡）。应用起来时把 tray.notify 挂上来
+NOTIFIER: list = [None]
+
+
+def set_notifier(fn) -> None:
+    NOTIFIER[0] = fn
+
+
+def notify(text: str, title: str = "Mythclass") -> None:
+    """发一条 Windows 系统通知（托盘气泡）。
+
+    没有托盘就退回小窗 —— 更新过程中托盘可能已经退出了，
+    那时候什么都不弹的话，教室里的人会一头雾水。
+    """
+    fn = NOTIFIER[0]
+    if callable(fn):
+        try:
+            fn(text, title)
+            return
+        except Exception:
+            pass
+    toast_note(text)
+
+
 def _update_notify(cfg, text: str) -> None:
     """更新相关的提示：受设置 updateNotify 控制，记一条日志方便排查
 
@@ -499,10 +523,10 @@ def _update_notify(cfg, text: str) -> None:
     try:
         import logging
 
-        logging.getLogger("mythclass").info("更新提示：%s", text)
+        logging.getLogger("mythclass").info("更新提示：%s", text.replace("\n", " "))
     except Exception:
         pass
-    toast_note(text)
+    notify(text)
 
 
 def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
@@ -549,14 +573,23 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
                 text = "正在下载新版本…"
                 ui_result(text)
 
+            _update_notify(cfg, f"开始下载新版本 v{info_dict.get('latest')} …")
             path = up.download(info_dict.get("url", ""), info_dict.get("sha256", ""))
             if not path:
                 why = (up.LAST_ERROR[0] if getattr(up, "LAST_ERROR", None) else "") or "不知道原因"
                 ui_result("下载没成功：\n" + why + "\n\n下载地址：\n" + (info_dict.get("url") or "（服务端没给地址）"))
                 return
+            try:
+                size_mb = round(path.stat().st_size / 1048576, 1)
+            except Exception:
+                size_mb = 0
             _update_notify(
                 cfg,
-                f"正在更新到 v{info_dict.get('latest')}，客户端会自己重启，装完就回来。",
+                f"下载完成（{size_mb} MB），准备安装 v{info_dict.get('latest')}。",
+            )
+            _update_notify(
+                cfg,
+                f"开始安装 v{info_dict.get('latest')}，客户端会自己重启，装完就回来。",
             )
             if up.run_installer(path):
                 # 装完应该自己回来；再挂一个兜底，免得更新完机器上没客户端
@@ -597,16 +630,16 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
         notes = (info.get("notes") or "").strip() or "（作者没写说明）"
         text = (f"有新版啦：v{info.get('current')} → v{info.get('latest')}\n\n"
                 f"{notes}")
+        # 检测到新版本就提示（手动检查、自动检查都提示），带上更新内容
+        _update_notify(
+            cfg,
+            f"检测到新版本 {info.get('latest')}（当前 {info.get('current')}）\n"
+            f"更新内容：{notes}",
+        )
         if auto or info.get("mandatory"):
-            if auto:
-                # 自动这条路平时是静默的，主人要能看见「它要更新了」
-                _update_notify(
-                    cfg,
-                    f"检测到新版本：v{info.get('current')} → v{info.get('latest')}，"
-                    f"正在后台准备，开始安装时会再提示一次。",
-                )
             do_install(info)
         else:
+            # 可选更新：再弹个对话框问要不要现在装（通知已经发过了）
             ui_result(text, offer=lambda: do_install(info))
 
     threading.Thread(target=work, daemon=True).start()
