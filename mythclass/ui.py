@@ -512,6 +512,15 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
                 ui_result("一个服务端都没问通，检查一下网络或者服务端地址。")
             return
 
+        if info.get("refused"):
+            # 服务端说「有更新」，但版本并不比本机高 —— 不装，并且留个记录
+            import logging as _logging
+
+            _logging.getLogger("mythclass").warning("拒绝更新：%s", info["refused"])
+            if not silent:
+                ui_result(f"服务端让更新到 v{info.get('latest')}，但本机已经是 v{info.get('current')}，没装。")
+            return
+
         if not info.get("update"):
             if not silent:
                 ui_result(f"已经是最新的：v{info.get('current') or ''}")

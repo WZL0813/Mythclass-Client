@@ -133,8 +133,35 @@ def _is_admin() -> bool:
         return False
 
 
+def _in_temp(exe: str = "") -> bool:
+    """这个程序是不是跑在临时目录里（安装器测试、随手解压这种）。
+
+    临时目录里的客户端**绝不能注册自启** —— 目录一被清掉，
+    每次登录都会去启动一个已经不完整的东西，弹
+    「Failed to start embedded python interpreter!」，
+    而且没人知道是哪来的。
+    """
+    import tempfile
+
+    try:
+        target = os.path.abspath(exe or sys.executable).lower()
+    except Exception:
+        return False
+    temps = {os.path.abspath(tempfile.gettempdir()).lower()}
+    for extra in (os.environ.get("TEMP"), os.environ.get("TMP")):
+        if extra:
+            temps.add(os.path.abspath(extra).lower())
+    return any(target.startswith(t) for t in temps if t)
+
+
 def enable_autostart() -> tuple[bool, str]:
     """两个都试：当前用户 Run 键（稳），以及计划任务 SYSTEM 权限（狠）"""
+    if _in_temp():
+        return False, "跑在临时目录里，不注册自启（免得目录被清后一直报错）"
+    if not getattr(sys, "frozen", False):
+        # 开发态：python 直接跑源码。注册自启只会往 Run 键里塞一条指向
+        # pythonw 的项，把开发机搞脏，没有任何意义。
+        return False, "开发态（python 直接跑的）不注册自启"
     messages = []
     try:
         import winreg

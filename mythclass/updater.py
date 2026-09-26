@@ -90,6 +90,14 @@ def check(cfg, timeout: float = 12.0) -> dict | None:
                 data = json.loads(res.read().decode("utf-8"))
                 data["server"] = base
                 data["current"] = __version__
+
+                # 不信服务端的一面之词：自己再比一遍版本。
+                # 比本机低就别更新 —— 降级会丢掉新版本里的东西，
+                # 安装器那道「不许降级」只是最后一道保险。
+                latest = str(data.get("latest") or "")
+                if data.get("update") and not is_newer(latest, __version__):
+                    data["update"] = False
+                    data["refused"] = f"服务端给的版本（{latest or '空'}）不比本机（{__version__}）新，不更新"
                 return data
         except Exception:
             continue
