@@ -4,6 +4,7 @@ python -m mythclass              正常启动（托盘 + 后台）
 python -m mythclass --guard <pid> 守护模式，盯住主进程
 python -m mythclass --console    前台跑，日志直接打屏上（调试用）
 python -m mythclass --status     打印状态就退出
+python -m mythclass --set-password 新密码   忘了管理密码时改一下
 python -m mythclass --apply-update  以管理员身份执行待安装的更新（内部用）
 """
 
@@ -1152,6 +1153,34 @@ def main(argv: list[str] | None = None) -> int:
         index = argv.index("--guard")
         pid = int(argv[index + 1]) if len(argv) > index + 1 else 0
         guard.run_guardian(pid)
+        return 0
+
+    # 忘了管理密码时：直接改掉（配置就在用户目录里，本来也是可写的）
+    if "--set-password" in argv:
+        index = argv.index("--set-password")
+        new_password = argv[index + 1].strip() if len(argv) > index + 1 else ""
+        cfg = config.load()
+        if len(new_password) < 6:
+            message = "密码至少 6 位。用法：--set-password 新密码"
+        else:
+            config.set_admin_password(cfg, new_password)
+            config.save(cfg)
+            message = "管理密码改好了。托盘「设置」里用它就能进。"
+        try:
+            print(message)
+        except Exception:
+            pass
+        try:
+            import tkinter as _tk
+            from tkinter import messagebox as _mb
+
+            _root = _tk.Tk()
+            _root.withdraw()
+            _root.attributes("-topmost", True)
+            _mb.showinfo("Mythclass", message)
+            _root.destroy()
+        except Exception:
+            pass
         return 0
 
     # 被最高权限任务拉起来装更新：核对服务端的 sha256，通过才装

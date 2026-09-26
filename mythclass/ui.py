@@ -233,6 +233,12 @@ class SettingsWindow:
             text="自动更新（有新版就自己下载安装，默认开着）",
         ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(14, 2))
 
+        v["updateNotify"] = tk.BooleanVar(value=bool(self.cfg.get("updateNotify", True)))
+        tk.Checkbutton(
+            frame, variable=v["updateNotify"], bg=BG, fg=INK, activebackground=BG,
+            text="更新时弹提示（检测到新版 / 开始安装 / 装完各提示一次）",
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 2))
+
         v["complianceAccepted"] = tk.BooleanVar(value=bool(self.cfg.get("complianceAccepted")))
         tk.Checkbutton(
             frame, variable=v["complianceAccepted"], bg=BG, fg=INK, activebackground=BG, wraplength=420, justify="left",
@@ -357,6 +363,10 @@ class SettingsWindow:
             cfg["maxLogSize"] = max(1, int(float(self.vars["maxLogSizeMB"].get()))) * 1024 * 1024
         except ValueError:
             cfg["maxLogSize"] = 209715200
+
+        # 这两项以前漏了保存 —— 窗口里勾了等于没勾
+        cfg["autoUpdate"] = bool(self.vars["autoUpdate"].get())
+        cfg["updateNotify"] = bool(self.vars["updateNotify"].get())
 
         cfg["protectProcess"] = bool(self.vars["protectProcess"].get())
         cfg["disableTaskManager"] = bool(self.vars["disableTaskManager"].get())
