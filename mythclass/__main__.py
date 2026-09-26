@@ -431,6 +431,8 @@ class MythclassClient:
         {"key": "updateNotify", "label": "更新时弹提示", "type": "bool"},
         {"key": "noticeSpeak", "label": "发通知时默认语音播报", "type": "bool"},
         {"key": "noticeVolume", "label": "播报音量（0-100）", "type": "number", "min": 0, "max": 100},
+        {"key": "noticeVoiceRate", "label": "播报语速（-10 慢 ~ 10 快，0 正常）",
+         "type": "number", "min": -10, "max": 10},
         {"key": "noticeVoice", "label": "播报音色（留空用默认中文音色）", "type": "text"},
         {"key": "noticeVoiceParts", "label": "播报念哪些（title=标题，content=内容，一行一个）",
          "type": "list"},

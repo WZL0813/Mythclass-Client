@@ -182,8 +182,9 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
 
                 said = _voice_text(title, body, speak_parts, speak_order)
                 _logging.getLogger("mythclass").info(
-                    "语音播报：音量 %s，音色 %s，念「%s」",
+                    "语音播报：音量 %s，语速 %s，音色 %s，念「%s」",
                     speak_volume,
+                    speak_rate,
                     speak_voice or "默认",
                     said,
                 )
@@ -735,7 +736,8 @@ def cmd_speak(args: dict) -> tuple[bool, str]:
     import logging as _logging
 
     _logging.getLogger("mythclass").info(
-        "语音播报：音量 %s，音色 %s，念「%s」", volume, str(args.get("voiceName") or "默认"), text
+        "语音播报：音量 %s，语速 %s，音色 %s，念「%s」",
+        volume, rate, str(args.get("voiceName") or "默认"), text,
     )
     return voice_mod.speak(text, volume=volume, rate=rate, voice=str(args.get("voiceName") or ""))
 

@@ -780,6 +780,9 @@ PAGE = """<!doctype html>
         <span class="muted tiny">音量</span>
         <input type="range" id="ntVoiceVol" min="0" max="100" value="100" style="flex:1">
         <span class="mono" id="ntVoiceVolText" style="min-width:34px">100</span>
+        <span class="muted tiny">语速</span>
+        <input type="range" id="ntVoiceRate" min="-10" max="10" value="0" step="1" style="flex:1">
+        <span class="mono" id="ntVoiceRateText" style="min-width:34px">0</span>
         <select class="nt-input" id="ntVoiceName" style="max-width:230px"></select>
         <button class="btn" id="ntVoiceTest">试听</button>
       </div>
@@ -1802,6 +1805,7 @@ function voiceArgs() {
   return {
     voice: document.getElementById('ntVoice').checked,
     voiceVolume: Number(document.getElementById('ntVoiceVol').value) || 0,
+    voiceRate: Number(document.getElementById('ntVoiceRate').value) || 0,
     voiceName: document.getElementById('ntVoiceName').value || '',
     voiceParts: voiceParts(),
     voiceOrder: voiceOrder(),
@@ -1810,6 +1814,12 @@ function voiceArgs() {
 
 document.getElementById('ntVoiceVol').addEventListener('input', (e) => {
   document.getElementById('ntVoiceVolText').textContent = e.target.value;
+});
+
+document.getElementById('ntVoiceRate').addEventListener('input', (e) => {
+  const v = Number(e.target.value);
+  const text = v === 0 ? '0（正常）' : (v < 0 ? v + '（慢）' : '+' + v + '（快）');
+  document.getElementById('ntVoiceRateText').textContent = text;
 });
 
 document.getElementById('ntVoiceTest').onclick = async () => {
@@ -1824,6 +1834,7 @@ document.getElementById('ntVoiceTest').onclick = async () => {
       voiceParts: args.voiceParts,
       voiceOrder: args.voiceOrder,
       voiceVolume: args.voiceVolume,
+      voiceRate: args.voiceRate,
       voiceName: args.voiceName,
     },
   });
@@ -1852,6 +1863,7 @@ function noticeArgs() {
     sound: $('ntSound').value || '',
     voice: $('ntVoice').checked,
     voiceVolume: Number($('ntVoiceVol').value) || 0,
+    voiceRate: Number($('ntVoiceRate').value) || 0,
     voiceName: $('ntVoiceName').value || '',
     voiceParts: voiceParts(),
     voiceOrder: voiceOrder(),

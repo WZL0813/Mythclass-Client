@@ -52,6 +52,7 @@ DEFAULTS = {
     # 语音播报（发通知时可以勾上，把内容念出来）
     "noticeSpeak": False,
     "noticeVolume": 100,       # 播报音量 0-100
+    "noticeVoiceRate": 0,       # 语速 -10~10（0 正常）
     "noticeVoice": "",         # 空 = 用默认（优先中文音色）
     "noticeVoiceParts": ["title", "content"],   # 念哪些
     "noticeVoiceOrder": ["title", "content"],   # 先念哪个
