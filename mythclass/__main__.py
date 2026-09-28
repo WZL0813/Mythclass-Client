@@ -251,6 +251,8 @@ class MythclassClient:
                     self.api = api
                     self.server_url = url
                     self.log(f"已经连上 {url}（机器号 {self.client_uid}）")
+                    # 一连上服务器就查一次更新（主人要的：别等定时那一次）
+                    threading.Thread(target=self._check_update_on_connect, daemon=True).start()
 
                     # 服务端那边的保留策略，以它为准
                     settings = (info.get("server") or {})
@@ -749,6 +751,23 @@ class MythclassClient:
                 self.socket.emit("lan_relay_result", {"id": rid, **out})
         except Exception as err:
             self.log(f"回传局域网中转结果失败：{err}", logging.WARNING)
+
+    def _check_update_on_connect(self) -> None:
+        """刚连上服务器时查一次更新
+
+        以前只有定时那一次（可能等很久），主人要求一上线就看一眼。
+        同一个连接只查一次；自动更新关着的话就只提示、不装。
+        """
+        now = time.time()
+        if now - getattr(self, "_last_update_probe", 0.0) < 60:
+            return
+        self._last_update_probe = now
+        try:
+            from . import ui as _ui
+
+            _ui.run_update_check(self.cfg, silent=True, auto=True)
+        except Exception as err:
+            self.log(f"上线检查更新失败：{err}", logging.WARNING)
 
     def _handle_command(self, payload: dict) -> None:
         command = str(payload.get("command") or "")
