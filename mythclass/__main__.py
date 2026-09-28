@@ -382,9 +382,8 @@ class MythclassClient:
 
     def _lan_screenshot(self) -> bytes | None:
         """全分辨率 PNG（局域网页面点截图用，尽量清晰）"""
-        if self.session_locked():
-            self.lan_frame_error = "这台机器锁屏了，锁屏时 Windows 不给抓屏"
-            return None
+        # 同上：锁屏只当提示，别在抓之前就把人挡回去
+        locked = self.session_locked()
         try:
             import io
 
@@ -400,7 +399,11 @@ class MythclassClient:
             self.lan_frame_error = ""
             return buffer.getvalue()
         except Exception as err:
-            self.lan_frame_error = f"{type(err).__name__}: {err}"
+            self.lan_frame_error = (
+                "这台机器锁屏了，锁屏时 Windows 不给抓屏"
+                if locked
+                else f"{type(err).__name__}: {err}"
+            )
             self.log(f"局域网截图失败：{self.lan_frame_error}", logging.WARNING)
             return None
 
@@ -638,9 +641,11 @@ class MythclassClient:
         自己抓、自己记错误 —— 原来走 monitors.grab_thumbnail()，
         它把异常吞了只返回 None，页面就只能黑着，谁也查不出为什么。
         """
-        if self.session_locked():
-            self.lan_frame_error = "这台机器锁屏了，锁屏时 Windows 不给抓屏"
-            return None
+        # 锁屏判断只当"提示"，不当闸门：
+        # 客户端是管理员身份跑的时候，OpenInputDesktop 经常打不开，
+        # 于是这里永远为 True —— 结果明明能抓也一直说"抓不到"。
+        # 真要抓不到，下面的 except 会带着原因告诉你。
+        locked = self.session_locked()
 
         try:
             import io
@@ -659,8 +664,10 @@ class MythclassClient:
                 self.lan_frame_error = ""
                 return buffer.getvalue()
         except Exception as err:
-            # 常见原因：这台机器锁屏了（Windows 不给抓）、远程桌面会话、
-            # 或者客户端跑在没有桌面的会话里
+            if locked:
+                self.lan_frame_error = "这台机器锁屏了，锁屏时 Windows 不给抓屏"
+                return None
+            # 常见原因：远程桌面会话、或者客户端跑在没有桌面的会话里
             self.lan_frame_error = f"{type(err).__name__}: {err}"
             self.log(f"本地网页抓画面失败：{self.lan_frame_error}", logging.WARNING)
             return None
