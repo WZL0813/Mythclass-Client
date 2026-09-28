@@ -3,7 +3,7 @@
 左键单击 → 关于窗口
 右键 → 关于 / 设置 / 状态 / 退出登录
 
-退出也要密码，别让学生随手点掉。
+退出也要密码，别让学生随手点掉（菜单上只写「退出」，不写括号）。
 """
 
 from __future__ import annotations
@@ -149,13 +149,12 @@ class Tray:
         ui.open_settings_async(self.app.cfg, self.app.client_uid, self.app.on_settings_saved)
 
     def _quit(self) -> None:
+        """不留密码直接退 —— 只给内部用（比如卸载、更新）。
 
-
-        """直接退出（主人要求：不问密码了）"""
-
-
+        托盘菜单**不能**挂这个：主人要的是菜单文字去掉「（要密码）」，
+        密码本身必须留着，不然学生随手一点客户端就没了。
+        """
         threading.Thread(target=self.app.shutdown, daemon=True).start()
-
 
 
     def _confirm_exit(self) -> None:
@@ -189,7 +188,7 @@ class Tray:
             MenuItem("检查更新", lambda: self._check_update()),
         MenuItem("重新连接", lambda: self._reconnect()),
             Menu.SEPARATOR,
-            MenuItem("退出", lambda: self._quit()),
+            MenuItem("退出", lambda: self._confirm_exit()),
         )
         self.icon = pystray.Icon("mythclass", image, __product__, menu)
         self.app.log("托盘起来了。")
