@@ -54,7 +54,15 @@ def ca_bundle() -> str | None:
 
 def socket_url(ws_url: str) -> str:
     url = (ws_url or "").strip().rstrip("/")
-    if not url.startswith(("ws://", "wss://")):
+    low = url.lower()
+    # 有人手填 http:// 或者配置文件里写的是 http 地址：
+    # 以前会拼成 "wss://http://…" 这种鬼东西（直接 getaddrinfo 失败）。
+    # https → wss，http → ws，两边都认。
+    if low.startswith("https://"):
+        url = "wss://" + url[len("https://") :]
+    elif low.startswith("http://"):
+        url = "ws://" + url[len("http://") :]
+    elif not low.startswith(("ws://", "wss://")):
         url = "wss://" + url
     return f"{url}/socket.io/?EIO=4&transport=websocket"
 

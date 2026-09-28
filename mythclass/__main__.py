@@ -328,6 +328,10 @@ class MythclassClient:
             # 以后没有服务器也能拿密钥直接控制（走局域网端口）。
             self._note_teacher(payload.get("from") or {})
             self._ensure_p2p().handle_offer(payload.get("sdp") or {})
+        elif event == "lan_relay":
+            # 老师从教师端看"局域网界面"：请求由服务器中转过来，
+            # 我们再把它转给本机的局域网网页服务（同一套路由，天然一致）
+            threading.Thread(target=self._handle_lan_relay, args=(payload,), daemon=True).start()
         elif event == "settings:update":
             self._apply_settings(payload.get("settings") or {})
         elif event in ("heartbeat:ack", "registered", "client:presence"):
@@ -707,6 +711,44 @@ class MythclassClient:
             return execute(command, args or {})
         except Exception as err:
             return False, f"{type(err).__name__}: {err}"
+
+    def _handle_lan_relay(self, payload: dict) -> None:
+        """服务器中转来的局域网请求：转给本机局域网服务，再把结果发回去
+
+        老师从教师端打开"局域网界面"时走这条 —— 请求不直连这台机器，
+        而是服务器转过来，我们再回环请求本机那个局域网网页服务。
+        这样两个界面的数据、鉴权、路由天然是同一套。
+        """
+        import base64 as _b64
+
+        from . import lanrelay
+
+        rid = payload.get("id") or ""
+        if not rid:
+            return
+        try:
+            out = lanrelay.call_base64(
+                port=self.web.port,
+                key=trust.own_key(),
+                method=payload.get("method") or "GET",
+                path=payload.get("path") or "/",
+                query=payload.get("query") or "",
+                body_base64=payload.get("body") or "",
+                content_type=payload.get("contentType") or "",
+            )
+        except Exception as err:
+            out = {
+                "status": 502,
+                "body": _b64.b64encode(
+                    ('{"ok":false,"error":"' + type(err).__name__ + '"}').encode()
+                ).decode(),
+                "contentType": "application/json",
+            }
+        try:
+            if self.socket:
+                self.socket.emit("lan_relay_result", {"id": rid, **out})
+        except Exception as err:
+            self.log(f"回传局域网中转结果失败：{err}", logging.WARNING)
 
     def _handle_command(self, payload: dict) -> None:
         command = str(payload.get("command") or "")
