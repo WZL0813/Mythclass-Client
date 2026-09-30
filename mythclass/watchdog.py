@@ -130,7 +130,20 @@ def _launch(role: str) -> bool:
             exe = copies()[role]
             if not exe.exists():
                 return False
-            subprocess.Popen([str(exe), "--watch", role], creationflags=flags, close_fds=True)
+            # 用 cmd 的 start 把它"脱开"：不挂在客户端下面。
+            # 任务管理器的「结束任务」会连子进程一起结束 ——
+            # 挂着的时候，老师一点结束任务，看门狗自己也死了，没人去蓝屏。
+            # start 之后它就成了独立进程，那下杀不到它。
+            try:
+                subprocess.Popen(
+                    ['cmd.exe', '/c', 'start', '', str(exe), '--watch', role],
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                    close_fds=True,
+                )
+                return True
+            except Exception as err:
+                _log(f"用 start 脱开失败（{type(err).__name__}: {err}），退回直接拉起")
+                subprocess.Popen([str(exe), "--watch", role], creationflags=flags, close_fds=True)
         else:
             # 源码模式：用 pythonw 跑同一个模块（进程名不好看，但只在开发时这样）
             exe = sys.executable.replace("python.exe", "pythonw.exe")
