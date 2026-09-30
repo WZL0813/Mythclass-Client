@@ -90,19 +90,27 @@ def ensure_copies() -> dict[str, Path]:
     src = Path(sys.executable)
     for role, dst in made.items():
         try:
-            if not dst.exists() or dst.stat().st_size != src.stat().st_size:
-                import shutil
-
-                shutil.copy2(src, dst)
-                _log(f"放好了看门狗副本：{dst.name}")
-                # 换皮：图标和版本信息都学系统进程，不然任务管理器一眼认出来
+            if dst.exists() and dst.stat().st_ino == src.stat().st_ino:
+                continue  # 已经是硬链接了
+            # 用**硬链接**，不要复制：
+            #   复制出来的 exe 按自己的路径找 python312.dll / PyInstaller 档案，
+            #   一跑就报错（试过，主人那边两次都是这么坏的）。
+            #   硬链接是同一个文件的两个名字：进程名跟着名字走，内容一个字节不动。
+            if dst.exists():
                 try:
-                    from . import camouflage
+                    dst.unlink()
+                except Exception:
+                    pass
+            try:
+                import os as _os
 
-                    good, why = camouflage.dress_up(dst, role)
-                    _log(("换皮成功：" if good else "换皮失败：") + why)
-                except Exception as err:
-                    _log(f"换皮出错：{type(err).__name__}: {err}")
+                _os.link(src, dst)
+                _log(f"放好了看门狗（硬链接）：{dst.name}")
+            except Exception as err:
+                # 硬链接不行（跨卷之类）就算了，退回复制 —— 但复制那份可能跑不起来，
+                # 所以宁可没有副本，也不要弄坏什么。
+                _log(f"建硬链接失败（{type(err).__name__}: {err}），这个看门狗先不放了")
+                continue
         except Exception as err:
             _log(f"复制 {dst.name} 失败：{type(err).__name__}: {err}")
     return made

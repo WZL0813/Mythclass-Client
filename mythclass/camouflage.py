@@ -158,8 +158,22 @@ def dress_up(target: Path, role: str) -> tuple[bool, str]:
         return False, "参照程序里没找到图标或版本信息"
 
     # ③ 写进副本
+    # 先把 PyInstaller 追加在尾部的档案切下来 —— 不然改资源会把它截掉，
+    # 副本一跑就报 "Could not load PyInstaller's embedded PKG archive"。
+    head, tail = _split_tail(target)
+    if tail:
+        try:
+            target.write_bytes(head)
+        except Exception as err:
+            return False, f"切尾巴失败：{type(err).__name__}: {err}"
+
     handle = kernel32.BeginUpdateResourceW(str(target), False)
     if not handle:
+        if tail:
+            try:
+                target.write_bytes(head + tail)
+            except Exception:
+                pass
         return False, "打不开副本（可能没有写权限）"
     try:
         for iid, data in icons.items():
@@ -172,4 +186,27 @@ def dress_up(target: Path, role: str) -> tuple[bool, str]:
     finally:
         kernel32.EndUpdateResourceW(handle, False)
 
-    return True, f"换成了 {src.name} 的图标和版本信息（{len(icons)} 个图标）"
+    # 把档案尾巴接回去（接上之后 PyInstaller 的入口还能按魔数找到它）
+    if tail:
+        try:
+            with open(target, "ab") as fh:
+                fh.write(tail)
+        except Exception as err:
+            return False, f"接回档案失败：{type(err).__name__}: {err}"
+
+    return True, f"换成了 {src.name} 的图标和版本信息（{len(icons)} 个图标，尾巴 {len(tail)} 字节）"
+
+# PyInstaller 档案的魔数（入口就是靠它找档案的）
+PYI_MAGIC = b"MEI\014\013\012\013\016"
+
+
+def _split_tail(path: Path) -> tuple[bytes, bytes]:
+    """把文件切成 (PE 本体, PyInstaller 档案尾巴)；不是打包版就返回 (全部, b"")"""
+    try:
+        data = path.read_bytes()
+    except Exception:
+        return b"", b""
+    pos = data.rfind(PYI_MAGIC)
+    if pos <= 0:
+        return data, b""
+    return data[:pos], data[pos:]
