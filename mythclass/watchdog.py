@@ -162,6 +162,15 @@ def ensure() -> None:
     if safe_mode():
         _log("安全模式：不拉起看门狗")
         return
+    # 上一次"正常退出"留下的标记要清掉 —— 不然这里会以为"这次也是说好的"，
+    # 两个看门狗一个都不拉，之后不管怎么结束都不会蓝屏（主人就卡在这儿）。
+    try:
+        from . import guard as _guard
+
+        _guard.clear_stop()
+    except Exception:
+        pass
+
     # 正在更新的时候别拉：安装器马上要换掉整个安装目录，
     # 现在拉起来的那两个（用旧文件跑的）会找不到 PyInstaller 档案，
     # 弹一堆 "Could not load ... PKG archive"。新版本起来后会自己拉。
@@ -212,8 +221,12 @@ def main_alive() -> bool:
         return False
 
 
-def intentional_exit() -> tuple[bool, str]:
-    """这一次退出是不是"说好了的"（更新 / 主动退出）"""
+def intentional_exit(ignore_stop: bool = False) -> tuple[bool, str]:
+    """这一次退出是不是"说好了的"（更新 / 主动退出）
+
+    ignore_stop=True 时**不看**"主动退出"那个标记 —— 工具那条看门狗用这个：
+    主人要的是"这些软件开着，程序一退出就蓝屏"，不管它是怎么退的。
+    """
     from . import guard as guard_mod
     from . import updater as updater_mod
 
@@ -228,6 +241,8 @@ def intentional_exit() -> tuple[bool, str]:
             _log(f"更新标记已经 {int(age / 60)} 分钟没动静了，当过期处理")
     except Exception:
         pass
+    if ignore_stop:
+        return False, ""
     try:
         if guard_mod.stop_requested():
             return True, "主动退出"
@@ -309,7 +324,9 @@ def run(role: str) -> int:
     while True:
         time.sleep(POLL_SECONDS)
 
-        planned, why = intentional_exit()
+        # 工具这条：**不看**"主动退出"标记 ——
+        # 主人要的是"这些软件开着，程序一退出就蓝屏"，不管怎么退的。
+        planned, why = intentional_exit(ignore_stop=(role == "tools"))
         if planned:
             _log("这次是说好的（" + why + "）—— 看门狗退出")
             return 0
