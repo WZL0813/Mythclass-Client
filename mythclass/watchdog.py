@@ -342,11 +342,14 @@ def trigger_bsod(why: str) -> bool:
         except Exception:
             admin = None
         _log(f"执行蓝屏程序：{exe}（管理员权限={admin}）")
-        child = subprocess.Popen([str(exe)], creationflags=flags, close_fds=True)
+        # 关键：要跟"手动双击"一模一样 ——
+        #   ① 工作目录设成它自己那个文件夹（工具常常要读同目录的东西）
+        #   ② 别加 CREATE_NO_WINDOW（手动双击是有正常窗口的；藏起来它可能就不干活）
+        child = subprocess.Popen([str(exe)], cwd=str(Path(exe).parent), close_fds=True)
         try:
             code = child.wait(timeout=10)
             _log(f"★ 蓝屏程序没起作用：它 {code} 就退出来了（管理员权限={admin}）"
-                 f" —— 这台机器的客户端多半不是用「最高权限登录自启」起来的")
+                 f" —— 去那台机器手动双击一次同一个文件对照一下")
             return False
         except Exception:
             pass  # 没退出 = 正在蓝屏，正常
