@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -63,6 +63,42 @@ namespace MythclassSetup
                 Thread.Sleep(400);
             }
             Step("  （旧客户端好像还在，装完建议重启一下机器）");
+        }
+
+        /// <summary>
+        /// 把"住在这个安装目录里"的进程全停掉。
+        ///
+        /// 为什么不能只按名字杀 MythclassClient：
+        ///   看门狗是主程序的**硬链接**，名字叫 WmiPrvSE.exe / RuntimeBroker.exe，
+        ///   它们是同一个文件 → 只要还活着，MythclassClient.exe 就被占着换不掉
+        ///   （主人装 3.0.0.27 时就是这个报错）。
+        /// 为什么按**路径**判断：
+        ///   Windows 自己也有叫 WmiPrvSE.exe / RuntimeBroker.exe 的进程，
+        ///   按名字杀会误伤系统 → 只有 exe 在这个目录里的才动手。
+        /// </summary>
+        static void KillProcessesIn(string dir, Action<string> step)
+        {
+            try
+            {
+                string full = Path.GetFullPath(dir).TrimEnd('\\') + "\\";
+                int killed = 0;
+                foreach (var p in Process.GetProcesses())
+                {
+                    string path = null;
+                    try { path = p.MainModule != null ? p.MainModule.FileName : null; } catch { }
+                    if (string.IsNullOrEmpty(path)) continue;
+                    if (!path.StartsWith(full, StringComparison.OrdinalIgnoreCase)) continue;
+                    try
+                    {
+                        p.Kill();
+                        p.WaitForExit(5000);
+                        killed++;
+                    }
+                    catch { }
+                }
+                if (killed > 0) step("  停掉了 " + killed + " 个还在跑的程序（含看门狗）");
+            }
+            catch { }
         }
 
         static void WriteStopFlag(string dir)
@@ -288,6 +324,10 @@ namespace MythclassSetup
             var vf = Path.Combine(targetDir, "version.txt");
             if (File.Exists(vf)) old = File.ReadAllText(vf).Trim();
 
+            // 先把住在这个目录里的进程（含化名看门狗）停掉 ——
+            // 不然旧客户端/看门狗占着 MythclassClient.exe，删也删不掉、换也换不了
+            KillProcessesIn(targetDir, Step);
+            Thread.Sleep(600);
             Step("正在清理旧版本…");
             for (int i = 0; i < 5; i++)
             {
@@ -300,6 +340,8 @@ namespace MythclassSetup
         /// <summary>把内嵌的 payload 直接解到安装目录（不经过任何临时目录）</summary>
         public void Extract(string targetDir)
         {
+            KillProcessesIn(targetDir, Step);
+            Thread.Sleep(400);
             Step("正在铺文件…");
             Directory.CreateDirectory(targetDir);
 
