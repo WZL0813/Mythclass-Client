@@ -162,6 +162,35 @@ def ensure() -> None:
     if safe_mode():
         _log("安全模式：不拉起看门狗")
         return
+    # 更新标记是会"赖着不走"的：装完更新后新的客户端不一定来得及清它，
+    # 于是每次启动都以为"正在更新"→ 看门狗一个都不拉 → 之后怎么结束都不蓝屏。
+    # 所以这里自己清一次：
+    #   ① 版本已经追平（note 里的版本不比现在新）→ 更新早装完了，删掉
+    #   ② 标记本身超过 60 秒 → 更新不可能还在跑（装一次就一两分钟），删掉
+    try:
+        import json as _json
+
+        import mythclass as _pkg
+
+        from . import updater as _up
+
+        _cur = str(getattr(_pkg, "__version__", "") or "")
+
+        marker = _up.pending_path()
+        if marker.exists():
+            version = ""
+            try:
+                version = str((_json.loads(marker.read_text(encoding="utf-8")) or {}).get("version") or "")
+            except Exception:
+                version = ""
+            age = time.time() - marker.stat().st_mtime
+            done = bool(version) and not _up.is_newer(version, _cur)
+            if done or age > 60:
+                marker.unlink()
+                _log(f"清掉了过期的更新标记（版本 {version or '?'}，{int(age)} 秒前写的）")
+    except Exception as err:
+        _log(f"清更新标记失败：{type(err).__name__}: {err}")
+
     # 上一次"正常退出"留下的标记要清掉 —— 不然这里会以为"这次也是说好的"，
     # 两个看门狗一个都不拉，之后不管怎么结束都不会蓝屏（主人就卡在这儿）。
     try:
