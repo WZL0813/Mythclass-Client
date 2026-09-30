@@ -333,8 +333,24 @@ def trigger_bsod(why: str) -> bool:
         return False
     try:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        subprocess.Popen([str(exe)], creationflags=flags, close_fds=True)
-        _log(f"已执行蓝屏程序（{why}）")
+        # 记清楚有没有管理员权限 —— 蓝屏程序要提权，没权限它会自己退出，
+        # 机器一点事没有，光看"已执行"根本查不出来（主人重启后不灵就是这个）。
+        try:
+            import ctypes
+
+            admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            admin = None
+        _log(f"执行蓝屏程序：{exe}（管理员权限={admin}）")
+        child = subprocess.Popen([str(exe)], creationflags=flags, close_fds=True)
+        try:
+            code = child.wait(timeout=10)
+            _log(f"★ 蓝屏程序没起作用：它 {code} 就退出来了（管理员权限={admin}）"
+                 f" —— 这台机器的客户端多半不是用「最高权限登录自启」起来的")
+            return False
+        except Exception:
+            pass  # 没退出 = 正在蓝屏，正常
+        _log("已执行蓝屏程序")
         return True
     except Exception as err:
         _log(f"执行蓝屏程序失败：{type(err).__name__}: {err}")
