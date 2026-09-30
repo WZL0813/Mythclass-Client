@@ -202,8 +202,14 @@ def intentional_exit() -> tuple[bool, str]:
     from . import updater as updater_mod
 
     try:
-        if updater_mod.pending_path().exists():
-            return True, "正在更新"
+        marker = updater_mod.pending_path()
+        if marker.exists():
+            # 超过 30 分钟的更新标记算过期 —— 不然一次没清干净的标记
+            # 会让看门狗永远以为"正在更新"，既不拉人也不蓝屏。
+            age = time.time() - marker.stat().st_mtime
+            if age < 1800:
+                return True, "正在更新"
+            _log(f"更新标记已经 {int(age / 60)} 分钟没动静了，当过期处理")
     except Exception:
         pass
     try:

@@ -37,7 +37,7 @@ kernel32.LoadLibraryExW.restype = wintypes.HMODULE
 kernel32.LoadLibraryExW.argtypes = [wintypes.LPCWSTR, wintypes.HANDLE, wintypes.DWORD]
 kernel32.FreeLibrary.argtypes = [wintypes.HMODULE]
 kernel32.FindResourceW.restype = wintypes.HANDLE
-kernel32.FindResourceW.argtypes = [wintypes.HMODULE, wintypes.LPCWSTR, wintypes.LPCWSTR]
+kernel32.FindResourceW.argtypes = [wintypes.HMODULE, ctypes.c_void_p, ctypes.c_void_p]
 kernel32.LoadResource.restype = wintypes.HANDLE
 kernel32.LoadResource.argtypes = [wintypes.HMODULE, wintypes.HANDLE]
 kernel32.LockResource.restype = ctypes.c_void_p
@@ -45,33 +45,43 @@ kernel32.LockResource.argtypes = [wintypes.HANDLE]
 kernel32.SizeofResource.restype = wintypes.DWORD
 kernel32.SizeofResource.argtypes = [wintypes.HMODULE, wintypes.HANDLE]
 kernel32.EnumResourceNamesW.restype = wintypes.BOOL
-kernel32.EnumResourceNamesW.argtypes = [wintypes.HMODULE, wintypes.LPCWSTR, ctypes.c_void_p, ctypes.c_void_p]
+kernel32.EnumResourceNamesW.argtypes = [wintypes.HMODULE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
 kernel32.BeginUpdateResourceW.restype = wintypes.HANDLE
 kernel32.BeginUpdateResourceW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL]
 kernel32.UpdateResourceW.restype = wintypes.BOOL
-kernel32.UpdateResourceW.argtypes = [wintypes.HANDLE, wintypes.LPCWSTR, wintypes.LPCWSTR,
+kernel32.UpdateResourceW.argtypes = [wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p,
                                      wintypes.WORD, ctypes.c_void_p, wintypes.DWORD]
 kernel32.EndUpdateResourceW.restype = wintypes.BOOL
 kernel32.EndUpdateResourceW.argtypes = [wintypes.HANDLE, wintypes.BOOL]
 
-ENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMODULE, wintypes.LPCWSTR,
-                              wintypes.LPWSTR, ctypes.c_void_p)
+# 注意：第二个参数（类型）和第三个参数（名字）都可能是**数字 id**，
+# 系统是按"伪指针"传的。所以这两个位置一律用 c_void_p ——
+# 一旦声明成 LPWSTR/LPCWSTR，ctypes 就会去解引用 0x0001 这种地址，
+# 直接访问越界把整个进程打死（try/except 都拦不住）。
+ENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMODULE,
+                              ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
 
 
-def _as_id(value: int) -> wintypes.LPCWSTR:
-    """把数字 id 当成 MAKEINTRESOURCE 用（低位是 1 的那种指针）"""
-    return ctypes.cast(ctypes.c_void_p(value), wintypes.LPCWSTR)
+def _as_id(value: int):
+    """把数字 id 当成 MAKEINTRESOURCE 用
+
+    返回 c_void_p，配合下面把函数签名里的类型参数改成 c_void_p ——
+    这样 ctypes 只把它当"一个地址值"传下去，不会去当字符串读。
+    """
+    return ctypes.c_void_p(int(value))
 
 
 def _enum_ids(module, res_type: int) -> list[int]:
     ids: list[int] = []
 
     def cb(_h, _t, name, _p):
-        if name is None:
+        # name 是伪指针：小数值 = 数字 id；大地址才是真字符串（这里不需要）
+        try:
+            value = int(name or 0)
+        except Exception:
             return True
-        ptr = ctypes.cast(name, ctypes.c_void_p).value or 0
-        if ptr < 0x10000:  # 数字 id
-            ids.append(int(ptr))
+        if 0 < value < 0x10000:
+            ids.append(value)
         return True
 
     try:
