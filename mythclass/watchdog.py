@@ -45,8 +45,9 @@ WATCH_TOOLS = (
     "mmc.exe",
 )
 
-POLL_SECONDS = 3.0
-GRACE_SECONDS = 25.0  # 主进程没了多久才动手（留出更新、主动退出的时间）
+POLL_SECONDS = 1.0  # 一秒看一遍：主人要的是「结束就蓝屏」，不能磨蹭
+GRACE_SECONDS = 25.0  # 主进程没了多久才「拉起来」（留出更新的时间）
+TOOLS_GRACE_SECONDS = 0.0  # 工具那条：主进程一没就立刻判断（主人要「立马蓝屏」）
 
 
 def safe_mode() -> bool:
@@ -303,38 +304,59 @@ def run(role: str) -> int:
     """看门狗本体。role = main | tools"""
     _log(f"看门狗启动：{role}（{NAMES.get(role, '?')}），安全模式={safe_mode()}")
     gone_since = 0.0
+    seen_alive = False  # 必须**亲眼见过**主进程活着，之后的消失才算数
+
     while True:
         time.sleep(POLL_SECONDS)
-        alive = main_alive()
-        if alive:
-            gone_since = 0.0
-            continue
 
         planned, why = intentional_exit()
         if planned:
-            _log("主进程不在了，但这次是说好的（" + why + "）—— 看门狗退出")
+            _log("这次是说好的（" + why + "）—— 看门狗退出")
             return 0
+
+        alive = main_alive()
+        if alive:
+            seen_alive = True
+            # ⚠️ 只有 main 角色才清零。
+            # tools 角色一旦开始计时就不许清 —— 否则 main 角色把客户端拉回来，
+            # tools 一看"又活着"就把计时归零，永远等不到期满，也就永远不蓝屏。
+            if role == "main":
+                gone_since = 0.0
+            continue
+
+        if not seen_alive:
+            # 没见过它活着（比如 pid 文件是上次留下的），不处理 ——
+            # 不然刚开机、任务管理器正好开着，就会莫名其妙蓝屏。
+            continue
 
         if not gone_since:
             gone_since = time.time()
         waited = time.time() - gone_since
-        if waited < GRACE_SECONDS:
-            continue
 
         if role == "main":
+            if waited < GRACE_SECONDS:
+                continue
             _log("主进程不在了，拉起来")
             if _relaunch_main():
                 gone_since = 0.0
+                seen_alive = False  # 等它真的起来再重新算
                 time.sleep(8)
             else:
                 time.sleep(5)
         else:
+            # 工具这条宽限期短一点：主进程没了 + 这些东西开着 = 有人想关掉它
+            if waited < TOOLS_GRACE_SECONDS:
+                continue
             hits = tools_running()
             if hits:
+                _log("主进程没了，而且这些还开着：" + "、".join(hits))
                 trigger_bsod("主进程没了，而且这些还开着：" + "、".join(hits))
                 time.sleep(30)
-            else:
                 gone_since = 0.0
+            else:
+                # 没开那些东西：接着盯着，不清零 ——
+                # 只要之后有人打开任务管理器，立刻算数
+                pass
 
 
 def _relaunch_main() -> bool:
