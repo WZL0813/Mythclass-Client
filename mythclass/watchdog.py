@@ -161,6 +161,13 @@ def ensure() -> None:
     if safe_mode():
         _log("安全模式：不拉起看门狗")
         return
+    # 正在更新的时候别拉：安装器马上要换掉整个安装目录，
+    # 现在拉起来的那两个（用旧文件跑的）会找不到 PyInstaller 档案，
+    # 弹一堆 "Could not load ... PKG archive"。新版本起来后会自己拉。
+    planned, why = intentional_exit()
+    if planned:
+        _log(f"现在是「{why}」，先不拉看门狗")
+        return
     ensure_copies()
     for role in NAMES:
         if not _running(role):

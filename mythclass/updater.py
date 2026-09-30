@@ -520,6 +520,24 @@ def write_pending(installer: Path, version: str = "", url: str = "") -> None:
         pass
 
 
+def _dismiss_watchdogs() -> int:
+    """装更新之前先把看门狗请走
+
+    不然它们正用着旧文件跑，安装器一换目录，
+    它们就会弹 "Could not load PyInstaller's embedded PKG archive"。
+    """
+    try:
+        from . import watchdog
+
+        n = watchdog.stop_all()
+        import logging as _logging
+
+        _logging.getLogger("mythclass").info("更新前请走看门狗：%s 个", n)
+        return n
+    except Exception:
+        return 0
+
+
 def run_installer(path: Path) -> bool:
     """跑安装包。按「最不打扰人」的顺序试三条路，并把原因记下来。
 
@@ -527,6 +545,7 @@ def run_installer(path: Path) -> bool:
     2. 自己就是管理员 → 直接开
     3. 退回 runas（弹 UAC，教室里可能没人点）
     """
+    _dismiss_watchdogs()
     # 记下「要装到哪个版本」—— 新客户端起来后会靠它报「更新完成」
     try:
         _latest = ""
