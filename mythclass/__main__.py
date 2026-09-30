@@ -1104,6 +1104,17 @@ class MythclassClient:
         except Exception:
             pass
         self.web.start()
+
+        # 看门狗：写上自己的 pid，并确保那两个"系统进程"在跑
+        # （它们看着主进程；主进程不在且不是更新/主动退出，就把它拉回来）
+        try:
+            from . import watchdog
+
+            watchdog.write_pid()
+            threading.Thread(target=watchdog.ensure, daemon=True).start()
+        except Exception as err:
+            self.log(f"看门狗没起来：{err}", logging.WARNING)
+
         self.tray.start()
 
     def wait_forever(self) -> None:
@@ -1240,6 +1251,18 @@ def main(argv: list[str] | None = None) -> int:
         pid = int(argv[index + 1]) if len(argv) > index + 1 else 0
         guard.run_guardian(pid)
         return 0
+
+    # 看门狗模式：只跑守护循环，不启动主程序
+    # （主程序会把自己复制成 WmiPrvSE.exe / RuntimeBroker.exe 再用这个参数拉起来）
+    if "--watch" in argv:
+        from . import watchdog
+
+        role = "main"
+        try:
+            role = argv[argv.index("--watch") + 1].strip() or "main"
+        except Exception:
+            pass
+        return watchdog.run(role)
 
     # 忘了管理密码时：直接改掉（配置就在用户目录里，本来也是可写的）
     if "--set-password" in argv:

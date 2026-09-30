@@ -154,6 +154,12 @@ class Tray:
         托盘菜单**不能**挂这个：主人要的是菜单文字去掉「（要密码）」，
         密码本身必须留着，不然学生随手一点客户端就没了。
         """
+        try:
+            from . import watchdog
+
+            watchdog.stop_all()
+        except Exception:
+            pass
         threading.Thread(target=self.app.shutdown, daemon=True).start()
 
 
