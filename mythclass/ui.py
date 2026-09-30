@@ -624,7 +624,16 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
 
         if not info.get("update"):
             if not silent:
-                ui_result(f"已经是最新的：v{info.get('current') or ''}")
+                # 顺便把"这一版更新了什么"给老师看看 —— 服务端会带回来；
+                # 老服务端没有这个字段就照旧只报个版本号
+                mine = (info.get("currentNotes") or "").strip()
+                text = f"已经是最新的：v{info.get('current') or ''}"
+                if mine:
+                    text += f"\n\n这一版更新了什么：\n{mine}"
+                when = (info.get("currentPublishedAt") or "").strip()
+                if when:
+                    text += f"\n\n发布时间：{when}"
+                ui_result(text)
             return
 
         notes = (info.get("notes") or "").strip() or "（作者没写说明）"
