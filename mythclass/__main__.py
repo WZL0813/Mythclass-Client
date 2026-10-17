@@ -67,6 +67,7 @@ class MythclassClient:
         self._last_thumb = 0.0     # 上次抓缩略图的时间，用来限流
         # 局域网直连：老师端在同一个网段时可以直接连这个端口，不走服务器
         # 本地网页：老师在同一局域网时直接打开浏览器就能控制，不经服务器
+        self._singleton = None  # 单实例互斥体句柄（活着就一直占着）
         self.web = lanweb.LanWeb(
             trust=trust,
             on_command=self._run_command_sync,
@@ -1110,19 +1111,12 @@ class MythclassClient:
         try:
             from . import watchdog
 
-            # 单实例：pid 文件里的那个还活着就说明已经有客户端在跑了。
-            # 两个客户端会同时收到服务端的命令 —— 老师发一条，教室弹两次。
-            # 这时候安静退出（不弹任何东西），让原来那个继续干活。
-            #
-            # 注意：刚更新完，旧进程可能还没死透 —— 所以多等几次再判，
-            # 免得新进程误以为"已经有实例"、自己把自己退了（那就更新不起来了）。
-            for _wait in range(6):
-                if not watchdog.main_alive():
-                    break
-                self.log(f"好像已经有客户端在跑，等它退（第 {_wait + 1} 次）")
-                time.sleep(1.0)
-            if watchdog.main_alive():
-                self.log("确实已经有一个客户端在跑，这次不重复启动（单实例保护）")
+            # 单实例保护：用 Windows 互斥体（内核对象，原子的）。
+            #   两个客户端同时起来时，"看 pid 文件"那种办法压不住 ——
+            #   都还没写 pid，都以为自己是第一个。互斥体只有一个能拿到。
+            #   拿到的那份把句柄存起来（self._singleton），进程活着就一直占着。
+            if not self._claim_singleton():
+                self.log("已经有一个客户端在跑，这次不重复启动（单实例保护）")
                 self._stop.set()
                 return
 
@@ -1132,6 +1126,37 @@ class MythclassClient:
             self.log(f"看门狗没起来：{err}", logging.WARNING)
 
         self.tray.start()
+
+    def _claim_singleton(self) -> bool:
+        """抢单实例名额。抢到 True，已经有别人在跑 False。
+
+        为什么用互斥体：它是内核对象，CreateMutex 那一瞬间就是原子的 ——
+        两个进程同时启动也只有一个能拿到（"看 pid 文件"那种做法压不住：
+        两个同时起来时都还没写 pid，都以为自己是第一个）。
+        更新的时候旧进程还没退？那就等几秒再抢，免得新进程把自己退了。
+        """
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            kernel32.CreateMutexW.restype = ctypes.c_void_p
+            kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+            ERROR_ALREADY_EXISTS = 183
+
+            for attempt in range(6):
+                handle = kernel32.CreateMutexW(None, False, "Global\\MythclassClientSingleton")
+                if not handle:
+                    return True  # 建不出来就别拦着人家启动
+                if kernel32.GetLastError() != ERROR_ALREADY_EXISTS:
+                    self._singleton = handle  # 占住，进程活着就一直占着
+                    return True
+                kernel32.CloseHandle(ctypes.c_void_p(handle))
+                self.log(f"已经有一个客户端在跑，等它退（第 {attempt + 1} 次）")
+                time.sleep(1.0)
+            return False
+        except Exception as err:
+            self.log(f"单实例检查出错（不影响启动）：{err}", logging.WARNING)
+            return True
 
     def wait_forever(self) -> None:
         while not self._stop.is_set():
