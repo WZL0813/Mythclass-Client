@@ -139,7 +139,7 @@ class AboutWindow:
 
 
 class SettingsWindow:
-    def __init__(self, cfg: dict, client_uid: str, on_save):
+    def __init__(self, cfg: dict, client_uid: str, on_save, hooks: dict | None = None):
         self.cfg = dict(cfg)
         self.client_uid = client_uid
         self.on_save = on_save
@@ -147,49 +147,79 @@ class SettingsWindow:
         self.root.title("Mythclass 设置")
         self.root.configure(bg=BG)
         self.root.attributes("-topmost", True)
-        _center(self.root, 620, 640)
         _apply_window_icon(self.root)
         self.vars: dict[str, tk.Variable] = {}
+        self.authorized = False
+        self._lock_frame = None
+        self._hooks = hooks or {}
 
-        if not self._ask_password():
+        # 一个窗口办完：先显示"要密码"，输对了原地换成设置界面。
+        # 以前是在设置窗口上再弹一个小窗，任务栏里两条、还老是压住设置窗口。
+        self._unlocked = tk.BooleanVar(value=False)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        _center(self.root, 460, 300)
+        self._lock_frame = self._build_lock()
+        if self._hooks.get("locked"):
+            self._hooks["locked"](self)
+        if not self.authorized:
+            # tkwait 是等"下一次改动"，已经解开就别等了
+            self.root.wait_variable(self._unlocked)
+        if not self.authorized:
             self.root.destroy()
-            self.authorized = False
             return
-        self.authorized = True
+        if self._lock_frame is not None:
+            self._lock_frame.destroy()
+            self._lock_frame = None
+        self.root.deiconify()
+        _center(self.root, 620, 640)
         self._build()
+        if self._hooks.get("ready"):
+            self._hooks["ready"](self)
 
-    # ------------------------------ 密码门 ------------------------------
+    def _on_close(self) -> None:
+        """没输密码就关窗口 = 不进去"""
+        self._unlocked.set(True)
 
-    def _ask_password(self) -> bool:
-        dialog = tk.Toplevel(self.root)
-        dialog.title("要密码")
-        dialog.configure(bg=BG)
-        dialog.attributes("-topmost", True)
-        dialog.resizable(False, False)
-        _center(dialog, 340, 190)
+    def _try_password(self, entered: str) -> bool:
+        """试一下密码；对了就把窗口切成设置界面"""
+        if not config.verify_admin_password(self.cfg, entered):
+            return False
+        self.authorized = True
+        self._unlocked.set(True)
+        return True
 
-        tk.Label(dialog, text="管理员密码", bg=BG, fg=MOSS, font=("Microsoft YaHei", 11, "bold")).pack(pady=(22, 6))
-        entry = tk.Entry(dialog, show="*", width=26, font=("Consolas", 11))
-        entry.pack()
+    # ------------------------------ 密码门（同一个窗口里） ------------------------------
+
+    def _build_lock(self) -> tk.Frame:
+        box = tk.Frame(self.root, bg=BG)
+        box.pack(fill="both", expand=True)
+
+        inner = tk.Frame(box, bg=BG)
+        inner.place(relx=0.5, rely=0.46, anchor="center")
+
+        tk.Label(inner, text="管理员密码", bg=BG, fg=MOSS, font=("Microsoft YaHei", 15, "bold")).pack(pady=(0, 16))
+
+        entry = tk.Entry(inner, show="*", width=22, font=("Consolas", 13))
+        entry.pack(pady=(0, 6))
         entry.focus_set()
 
-        result = {"ok": False, "password": ""}
+        err = tk.Label(inner, text="", bg=BG, fg=AMBER, font=("Microsoft YaHei", 9))
+        err.pack(pady=(0, 10))
 
-        def confirm(_event=None):
-            entered = entry.get()
-            if config.verify_admin_password(self.cfg, entered):
-                result["ok"] = True
-                result["password"] = entered
-                dialog.destroy()
-            else:
-                messagebox.showerror("不对", "密码错了。", parent=dialog)
-                entry.delete(0, tk.END)
+        def confirm(_event=None) -> None:
+            if self._try_password(entry.get()):
+                return
+            err.configure(text="密码不对，再试一次。")
+            entry.delete(0, tk.END)
+            entry.focus_set()
 
         entry.bind("<Return>", confirm)
-        tk.Button(dialog, text="进去", command=confirm, bg=MOSS, fg=BG, relief="flat", padx=18, pady=4, cursor="hand2").pack(pady=14)
-        dialog.grab_set()
-        self.root.wait_window(dialog)
-        return result["ok"]
+        tk.Button(
+            inner, text="进去", command=confirm,
+            bg=MOSS, fg=BG, relief="flat", padx=24, pady=6, cursor="hand2",
+            font=("Microsoft YaHei", 10),
+        ).pack()
+        return box
 
     # ------------------------------- 界面 -------------------------------
 
