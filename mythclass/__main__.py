@@ -1119,6 +1119,9 @@ class MythclassClient:
                 self.log("已经有一个客户端在跑，这次不重复启动（单实例保护）")
                 self._stop.set()
                 return
+            # 抢到了名额 = 我是合法那一个 → 把同目录里残留的旧实例收掉
+            # （装新版本时旧进程还在跑，而旧版本不占互斥体名额）
+            self._sweep_other_clients()
 
             watchdog.write_pid()
             threading.Thread(target=watchdog.ensure, daemon=True).start()
@@ -1126,6 +1129,46 @@ class MythclassClient:
             self.log(f"看门狗没起来：{err}", logging.WARNING)
 
         self.tray.start()
+
+    def _sweep_other_clients(self) -> int:
+        """把同一个安装目录里、不是我自己的那些 MythclassClient 收掉。
+
+        为什么需要：装了新版本之后，**旧版本那个进程还在跑** ——
+        安装器不会杀它，而旧版本不认识互斥体（不占名额），
+        于是新版本启动时以为没人占 → 两个并存 → 老师发一条消息弹两次。
+        这里按**可执行文件路径**筛选，只看自己这个安装目录，不碰别的程序。
+        """
+        import os as _os
+
+        try:
+            import psutil
+        except Exception:
+            return 0
+        me = _os.getpid()
+        try:
+            mine = Path(sys.executable).resolve().parent
+        except Exception:
+            return 0
+        killed = 0
+        for proc in psutil.process_iter(["pid", "name", "exe"]):
+            try:
+                if proc.info["pid"] == me:
+                    continue
+                name = (proc.info.get("name") or "").lower()
+                if "mythclass" not in name:
+                    continue
+                exe = proc.info.get("exe") or ""
+                if not exe:
+                    continue
+                if Path(exe).resolve().parent != mine:
+                    continue  # 不是这个安装目录的，别动
+                proc.kill()
+                killed += 1
+            except Exception:
+                continue
+        if killed:
+            self.log(f"收掉了 {killed} 个多余的 MythclassClient（同一安装目录里的旧实例）")
+        return killed
 
     def _claim_singleton(self) -> bool:
         """抢单实例名额。抢到 True，已经有别人在跑 False。
