@@ -1110,6 +1110,22 @@ class MythclassClient:
         try:
             from . import watchdog
 
+            # 单实例：pid 文件里的那个还活着就说明已经有客户端在跑了。
+            # 两个客户端会同时收到服务端的命令 —— 老师发一条，教室弹两次。
+            # 这时候安静退出（不弹任何东西），让原来那个继续干活。
+            #
+            # 注意：刚更新完，旧进程可能还没死透 —— 所以多等几次再判，
+            # 免得新进程误以为"已经有实例"、自己把自己退了（那就更新不起来了）。
+            for _wait in range(6):
+                if not watchdog.main_alive():
+                    break
+                self.log(f"好像已经有客户端在跑，等它退（第 {_wait + 1} 次）")
+                time.sleep(1.0)
+            if watchdog.main_alive():
+                self.log("确实已经有一个客户端在跑，这次不重复启动（单实例保护）")
+                self._stop.set()
+                return
+
             watchdog.write_pid()
             threading.Thread(target=watchdog.ensure, daemon=True).start()
         except Exception as err:
