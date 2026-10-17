@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 
@@ -119,78 +120,96 @@ def _ssl_context():
 
 
 def download(url: str, sha256: str = "", on_progress=None, timeout: float = 600.0) -> Path | None:
-    """下载安装包到临时目录，顺手校验 sha256。失败返回 None"""
-    name = url.split("/")[-1].split("?")[0] or "MythclassSetup.exe"
-    if not name.lower().endswith(".exe"):
-        name += ".exe"
-        name = Path(url.split("?")[0]).name or f"MythclassSetup-{__version__}.exe"
-    if not name.lower().endswith(".exe"):
-        name = f"MythclassSetup-{__version__}.exe"
-    dest = update_dir() / name
+    """下载安装包到临时目录，顺手校验 sha256。失败返回 None
 
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": f"MythclassClient/{__version__}"})
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as res:
-            total = int(res.headers.get("Content-Length") or 0)
-            done = 0
-            digest = hashlib.sha256()
-            with open(dest, "wb") as fh:
-                while True:
-                    chunk = res.read(256 * 1024)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    digest.update(chunk)
-                    done += len(chunk)
-                    if on_progress and total:
-                        on_progress(done, total)
-    except Exception as err:
-        LAST_ERROR[:] = [f"{type(err).__name__}: {err}"]
-        return None
+    先写 .part，**校验通过之后**才改名盖上去。
+    这样：下到一半断网、下回来的是个 HTML 页面、sha 对不上 ——
+    都只会丢掉 .part，上一份好的包还在，不会被祸害成半个
+    （以前就是直接把 dest 覆盖掉，坏了之后又得重下，就成了"反复下载"）。
+    """
+    dest = update_dir() / _installer_name(url)
+    part = dest.with_suffix(dest.suffix + ".part")
+    digest = None
 
-    # 不管有没有 sha256，都要确认下下来的**真的是个 exe**。
-    # 曾经出现过下载地址返回 HTML（页面）的情况：文件被当成安装包跑，
-    # Windows 弹「此应用无法在你的电脑上运行」，还不容易看出为什么。
+    for attempt in range(2):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": f"MythclassClient/{__version__}"})
+            with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as res:
+                total = int(res.headers.get("Content-Length") or 0)
+                done = 0
+                digest = hashlib.sha256()
+                with open(part, "wb") as fh:
+                    while True:
+                        chunk = res.read(256 * 1024)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        digest.update(chunk)
+                        done += len(chunk)
+                        if on_progress and total:
+                            on_progress(done, total)
+            break
+        except Exception as err:
+            LAST_ERROR[:] = [f"{type(err).__name__}: {err}"]
+            try:
+                part.unlink()
+            except Exception:
+                pass
+            if attempt == 1:
+                return None
+
+    # 校验 .part：真的是个 exe 吗？大小够吗？sha 对得上吗？
+    # 全过了才 os.replace 到正式文件名。
     try:
-        size = dest.stat().st_size
-        head = dest.open("rb").read(2)
+        size = part.stat().st_size
+        head = part.open("rb").read(2)
     except Exception as err:
         LAST_ERROR[:] = [f"下载完读不了：{type(err).__name__}: {err}"]
+        try:
+            part.unlink()
+        except Exception:
+            pass
         return None
+
+    def _drop(reason: str) -> None:
+        LAST_ERROR[:] = [reason]
+        try:
+            part.unlink()
+        except Exception:
+            pass
 
     if head != b"MZ":
         try:
-            snippet = dest.open("rb").read(120).decode("utf-8", errors="replace").replace("\n", " ")
+            snippet = part.open("rb").read(120).decode("utf-8", errors="replace").replace("\n", " ")
         except Exception:
             snippet = ""
-        try:
-            dest.unlink()
-        except Exception:
-            pass
-        LAST_ERROR[:] = [
+        _drop(
             f"下下来的不是安装包（{size} 字节，开头是 {head!r}）\n"
             f"内容开头：{snippet[:100]}\n"
             f"多半是下载地址不对或者服务端没给到这个文件。"
-        ]
+        )
         return None
 
     if size < 1024 * 1024:
-        try:
-            dest.unlink()
-        except Exception:
-            pass
-        LAST_ERROR[:] = [f"下下来的文件太小（{size} 字节），不像安装包，已删掉。"]
+        _drop(f"下下来的文件太小（{size} 字节），不像安装包，已丢掉。")
         return None
 
-    if sha256:
+    if sha256 and digest is not None:
         actual = digest.hexdigest().lower()
         if actual != sha256.strip().lower():
-            try:
-                dest.unlink()
-            except Exception:
-                pass
-            LAST_ERROR[:] = [f"下载下来的文件 sha256 对不上（要 {sha256[:12]}…，实际 {actual[:12]}…）"]
+            _drop(f"下载下来的文件 sha256 对不上（要 {sha256[:12]}…，实际 {actual[:12]}…）")
             return None
+
+    try:
+        os.replace(part, dest)
+    except Exception as err:
+        LAST_ERROR[:] = [f"改名失败：{type(err).__name__}: {err}"]
+        try:
+            part.unlink()
+        except Exception:
+            pass
+        return None
+
     LAST_ERROR[:] = [""]
     return dest
 
@@ -207,6 +226,135 @@ def update_dir() -> Path:
         folder = Path(tempfile.gettempdir()) / "Mythclass"
     folder.mkdir(parents=True, exist_ok=True)
     return folder
+
+
+def _installer_name(url: str) -> str:
+    """下载地址 -> 本地文件名（统一成 MythclassSetup-xxx.exe 这种）"""
+    name = (url.split("/")[-1].split("?")[0] or "").strip() or "MythclassSetup.exe"
+    if not name.lower().endswith(".exe"):
+        name = (Path(url.split("?")[0]).name or "").strip() or f"MythclassSetup-{__version__}.exe"
+    if not name.lower().endswith(".exe"):
+        name = f"MythclassSetup-{__version__}.exe"
+    return name
+
+
+# ---------------------------------------------------------------- 更新状态
+#
+# 为什么要有这东西：以前每次启动/每次重连都会重新走一遍
+# 「查 -> 下 58 MB -> 装」，装不上就再来一遍，主人看到的就是"反复下载"。
+# 现在把「这个版本下过没有、试过几次」记下来：
+#   · 同一个版本已经下好且 sha 对得上 -> 直接复用，不再下载
+#   · 同一个版本试满 3 次还装不上 -> 先停 6 小时，别折腾了，等人手动装
+STATE_FILE = "update-state.json"
+MAX_ATTEMPTS = 3
+COOLDOWN_SECONDS = 6 * 3600
+
+
+def state_path() -> Path:
+    return update_dir() / STATE_FILE
+
+
+def read_state() -> dict:
+    try:
+        data = json.loads(state_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def write_state(data: dict) -> None:
+    try:
+        tmp = state_path().with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, state_path())
+    except Exception:
+        pass
+
+
+def reuse_downloaded(version: str, url: str = "", sha256: str = "") -> Path | None:
+    """这个版本要是已经下好了（大小、sha 都对得上），就别再下一遍"""
+    want = (sha256 or "").strip().lower()
+    cands: list[Path] = []
+    try:
+        if url:
+            cands.append(update_dir() / _installer_name(url))
+        if version:
+            cands.append(update_dir() / f"MythclassSetup-{str(version).lstrip('vV')}.exe")
+        # pending-update.json 里指的那个也看看
+        info = read_pending()
+        if info.get("installer"):
+            cands.append(Path(str(info["installer"])))
+    except Exception:
+        return None
+
+    for path in cands:
+        try:
+            if not path.is_file() or path.stat().st_size < 1024 * 1024:
+                continue
+            if path.open("rb").read(2) != b"MZ":
+                continue
+            if want and hashlib.sha256(path.read_bytes()).hexdigest().lower() != want:
+                continue
+            return path
+        except Exception:
+            continue
+    return None
+
+
+def note_attempt(version: str) -> int:
+    """记一次"要装了"，返回这是第几次"""
+    version = str(version or "").strip()
+    st = read_state()
+    if str(st.get("version") or "") != version:
+        st = {"version": version, "attempts": 0}
+    st["attempts"] = int(st.get("attempts") or 0) + 1
+    st["at"] = time.time()
+    write_state(st)
+    return st["attempts"]
+
+
+def attempts_for(version: str) -> int:
+    st = read_state()
+    if str(st.get("version") or "") != str(version or "").strip():
+        return 0
+    return int(st.get("attempts") or 0)
+
+
+def too_many_attempts(version: str, limit: int = MAX_ATTEMPTS, cooldown: float = COOLDOWN_SECONDS) -> bool:
+    """同一个版本试太多次了？先歇一会儿，别反复下载反复装"""
+    st = read_state()
+    if str(st.get("version") or "") != str(version or "").strip():
+        return False
+    if int(st.get("attempts") or 0) < limit:
+        return False
+    try:
+        return time.time() - float(st.get("at") or 0) < cooldown
+    except Exception:
+        return False
+
+
+def clear_state_if_current() -> None:
+    """新版本真起来了 -> 把更新状态清掉（下次更新重新算）"""
+    st = read_state()
+    if not st:
+        return
+    if str(st.get("version") or "") == __version__:
+        try:
+            state_path().unlink()
+        except Exception:
+            pass
+        try:
+            pending_path().unlink()
+        except Exception:
+            pass
+
+
+def read_pending() -> dict:
+    try:
+        data = json.loads(pending_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 # ---------------------------------------------------------------- 免 UAC 更新

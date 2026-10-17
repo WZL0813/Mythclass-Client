@@ -1045,6 +1045,12 @@ class MythclassClient:
     def start(self) -> None:
         self.log(f"{__product__} v{__version__} 启动，机器号 {self.client_uid}")
 
+        # 更新状态收个尾：如果记的"要装到 X 版"就是现在这个版本，说明装成了 —— 清掉
+        try:
+            updater_mod.clear_state_if_current()
+        except Exception:
+            pass
+
         if not self.cfg.get("complianceAccepted"):
             self.log("合规使用承诺还没勾，去托盘「设置」里勾上再跑。", logging.WARNING)
 

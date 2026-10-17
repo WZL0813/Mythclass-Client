@@ -569,25 +569,40 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
         def do_install(info_dict):
             from . import updater as up
 
-            _update_notify(cfg, f"开始下载新版本 v{info_dict.get('latest')} …")
-            path = up.download(info_dict.get("url", ""), info_dict.get("sha256", ""))
-            if not path:
-                why = (up.LAST_ERROR[0] if getattr(up, "LAST_ERROR", None) else "") or "不知道原因"
-                _update_notify(cfg, f"下载失败：{why[:120]}")
-                if not silent:
-                    ui_result("下载没成功：\n" + why + "\n\n下载地址：\n" + (info_dict.get("url") or "（服务端没给地址）"))
+            latest = str(info_dict.get("latest") or "")
+            # 同一个版本试太多次还没装上：先别折腾了（不然就是反复下载 58 MB）
+            if up.too_many_attempts(latest):
+                tries = up.attempts_for(latest)
+                _update_notify(
+                    cfg,
+                    f"v{latest} 自动装了 {tries} 次都没成，先不自动试了（6 小时后再看）。"
+                    "需要的话托盘「检查更新」里手动装。",
+                )
                 return
-            try:
-                size_mb = round(path.stat().st_size / 1048576, 1)
-            except Exception:
-                size_mb = 0
+
+            # 之前已经下好同一个版本？直接用，不再下一遍
+            path = up.reuse_downloaded(latest, info_dict.get("url", ""), info_dict.get("sha256", ""))
+            if path:
+                _update_notify(cfg, f"v{latest} 之前已经下好了，这次直接装（不再重新下载）。")
+            else:
+                _update_notify(cfg, f"开始下载新版本 v{latest} …")
+                path = up.download(info_dict.get("url", ""), info_dict.get("sha256", ""))
+                if not path:
+                    why = (up.LAST_ERROR[0] if getattr(up, "LAST_ERROR", None) else "") or "不知道原因"
+                    _update_notify(cfg, f"下载失败：{why[:120]}")
+                    if not silent:
+                        ui_result("下载没成功：\n" + why + "\n\n下载地址：\n" + (info_dict.get("url") or "（服务端没给地址）"))
+                    return
+                try:
+                    size_mb = round(path.stat().st_size / 1048576, 1)
+                except Exception:
+                    size_mb = 0
+                _update_notify(cfg, f"下载完成（{size_mb} MB），准备安装 v{latest}。")
+
+            attempt = up.note_attempt(latest)
             _update_notify(
                 cfg,
-                f"下载完成（{size_mb} MB），准备安装 v{info_dict.get('latest')}。",
-            )
-            _update_notify(
-                cfg,
-                f"开始安装 v{info_dict.get('latest')}，客户端会自己重启，装完就回来。",
+                f"开始安装 v{latest}（第 {attempt} 次），客户端会自己重启，装完就回来。",
             )
             if up.run_installer(path):
                 # 装完应该自己回来；再挂一个兜底，免得更新完机器上没客户端。
@@ -598,8 +613,8 @@ def run_update_check(cfg, silent: bool = False, auto: bool = False) -> None:
             else:
                 why = (up.LAST_ERROR[0] if getattr(up, "LAST_ERROR", None) else "") or "不知道原因"
                 # 教室那台机器前面可能有人 —— 给个能点的窗口，别只留一句话
-                _update_notify(cfg, f"自动安装没成功：{why[:120]}")
-                if info_dict.get("mandatory"):
+                _update_notify(cfg, f"自动安装没成功（第 {attempt} 次）：{why[:120]}")
+                if info_dict.get("mandatory") and attempt < up.MAX_ATTEMPTS:
                     # 强制更新：教室那台机器前面可能有人 —— 给个能点的窗口重试
                     _reinstall_prompt(path, lambda: do_install(info_dict))
                 elif not silent:
