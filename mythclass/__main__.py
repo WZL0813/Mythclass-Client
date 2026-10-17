@@ -21,6 +21,7 @@ from . import __product__, __version__, config, guard, identity
 from . import updater as updater_mod
 from .api import ServerApi, SocketClient
 from .commands import execute, known_commands
+from .commands import is_admin as is_admin_now
 from .db import RecordStore
 from .monitors import AudioMonitor, FileMonitor, ScreenStreamer
 from . import usage
@@ -190,22 +191,16 @@ class MythclassClient:
             return ok_run, text
 
         self.web.run_shell = _run_shell
-
-        self.web.settings_view = lambda: {
-            "name": self.cfg.get("clientName") or "教室一体机",
-            "clientUid": self.client_uid,
-            "version": __version__,
-            "servers": [s.get("url") for s in (self.cfg.get("servers") or []) if isinstance(s, dict)],
-            "watchDirs": list(self.cfg.get("watchDirs") or []),
-            "screenFps": self.cfg.get("screenFps", 12),
-            "screenQuality": self.cfg.get("screenQuality", 60),
-            "autoUpdate": bool(self.cfg.get("autoUpdate", True)),
-            "localIps": identity.local_ips(),
-            "lanPort": int(getattr(self.lan, "port", 0) or 0),
-            "lanWebPort": int(getattr(self.web, "port", 0) or 0),
-            "fields": self._settings_fields(),
-        }
+        self.web.settings_view = self.settings_view
         self.web.apply_lan_settings = self._apply_lan_settings
+
+        # 教师端「命令 / 设置」那两页要的东西：同一份实现挂到命令表上，
+        # 让它们和局域网那个页面用的是同一套逻辑（改一处两边都对）
+        from . import commands as _commands
+
+        _commands.register("status", self.status)
+        _commands.register("settings_get", self.settings_view)
+        _commands.register("settings_set", self._apply_settings_from_console)
         self.lan = lanport.LanPort(
             trust=trust,
             on_command=self._run_command_sync,
@@ -475,6 +470,35 @@ class MythclassClient:
         {"key": "servers", "label": "服务器地址（一行一个，官方那条会保留）", "type": "list", "restart": True},
         {"key": "newAdminPassword", "label": "客户端管理密码（留空表示不改）", "type": "secret"},
     ]
+
+    def settings_view(self) -> dict:
+        """这台机器的设置：只读那几项 + 可改的清单。
+
+        局域网页和教师端「设置」页吃的是同一份 —— 改一处两边都对。
+        """
+        return {
+            "name": self.cfg.get("clientName") or "教室一体机",
+            "clientUid": self.client_uid,
+            "version": __version__,
+            "servers": [s.get("url") for s in (self.cfg.get("servers") or []) if isinstance(s, dict)],
+            "watchDirs": list(self.cfg.get("watchDirs") or []),
+            "screenFps": self.cfg.get("screenFps", 12),
+            "screenQuality": self.cfg.get("screenQuality", 60),
+            "autoUpdate": bool(self.cfg.get("autoUpdate", True)),
+            "localIps": identity.local_ips(),
+            "lanPort": int(getattr(self.lan, "port", 0) or 0),
+            "lanWebPort": int(getattr(self.web, "port", 0) or 0),
+            "isAdmin": is_admin_now(),
+            "fields": self._settings_fields(),
+        }
+
+    def _apply_settings_from_console(self, values: dict):
+        """教师端改设置：那边已经验过身份（登录 + 这台机器归他），不再对局域网密钥"""
+        try:
+            own = trust.own_key()
+        except Exception:
+            own = ""
+        return self._apply_lan_settings(own, values)
 
     def _settings_fields(self) -> list[dict]:
         """清单 + 当前值，页面照着渲染"""

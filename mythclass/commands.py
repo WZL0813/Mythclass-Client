@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import os
 import subprocess
 import sys
@@ -20,6 +21,17 @@ from pathlib import Path
 from . import config, netban
 
 CREATE_NO_WINDOW = 0x08000000
+
+SHELL_MAX_TEXT = 20000  # 回传上限：终端输出太长就把尾巴切掉
+
+# 有些命令得靠「客户端那个对象」才知道答案（它自己的状态、它那份设置清单），
+# 但对象在 __main__ 里，不能在 commands 里循环引用 —— 启动时挂进来。
+HOOKS: dict = {}
+
+
+def register(name: str, func) -> None:
+    """把需要客户端上下文的实现挂进来（状态 / 设置这类）"""
+    HOOKS[name] = func
 
 
 SAFE_ENV = "MYTHCLASS_SAFE"
@@ -819,6 +831,56 @@ def cmd_net_ban(args: dict) -> tuple[bool, str]:
     return netban.apply(servers, minutes=minutes)
 
 
+def cmd_status(args: dict) -> tuple[bool, str]:
+    """这台机器现在的样子（教师端「命令」页的 status 预设用它）"""
+    return _hook("status")
+
+
+def cmd_settings_get(args: dict) -> tuple[bool, str]:
+    """整份设置：只读那几项 + 可改的清单（教师端照着渲染表单）"""
+    return _hook("settings_get")
+
+
+def cmd_settings_set(args: dict) -> tuple[bool, str]:
+    """一键改设置。只提交改动过的项，没碰的不动。"""
+    values = args.get("values")
+    return _hook("settings_set", values if isinstance(values, dict) else {})
+
+
+def cmd_shell(args: dict) -> tuple[bool, str]:
+    """Windows 命令行（cmd）。以这台机器当前用户身份跑，输出原样回去。
+
+    这条能跑任意命令 —— 所以它只走「老师已登录、且这台机器是他的」那条路，
+    局域网网页那边另有自己的密钥校验。
+    """
+    line = str(args.get("command") or "").strip()
+    if not line:
+        return False, "没给命令"
+    try:
+        timeout = float(args.get("timeout") or 20.0)
+    except (TypeError, ValueError):
+        timeout = 20.0
+    timeout = max(1.0, min(timeout, 120.0))
+    from . import shell as shell_mod
+
+    ok, text = shell_mod.run(line, timeout=timeout)
+    text = str(text or "")
+    if len(text) > SHELL_MAX_TEXT:
+        text = text[:SHELL_MAX_TEXT] + f"\n…（太长了，只回了前 {SHELL_MAX_TEXT} 个字）"
+    return ok, text
+
+
+def _hook(name: str, *args) -> tuple[bool, str]:
+    """把结果转成 JSON 字符串回给教师端"""
+    func = HOOKS.get(name)
+    if not func:
+        return False, f"这个客户端版本还不支持 {name}（要 3.0.0.37 以上）"
+    try:
+        return True, json.dumps(func(*args), ensure_ascii=False, default=str)
+    except Exception as err:
+        return False, f"{type(err).__name__}: {err}"
+
+
 REGISTRY = {
     "lock": cmd_lock,
     "unlock": cmd_unlock,
@@ -845,6 +907,10 @@ REGISTRY = {
     "force_close_window": cmd_force_close_window,
     "quiet": cmd_quiet,
     "hand": cmd_hand,
+    "shell": cmd_shell,
+    "status": cmd_status,
+    "settings_get": cmd_settings_get,
+    "settings_set": cmd_settings_set,
 }
 
 
