@@ -2,7 +2,8 @@
 
 为什么要这套：
 - 教室里的机器没人看着，弹个框就得等老师跑过去点掉
-- 桌面上的日志方便现场的人直接拷给管理员
+- 桌面上的日志方便现场的人直接拷给管理员（同样的内容也进 client.log，
+  桌面写不出去、或者进程半路被收掉时，还有地方能看）
 - 退出之后跟班进程会把它拉起来，等于自动重启
 
 防自锁：120 秒内崩第二次就只上报、不再退出。
@@ -26,6 +27,20 @@ from . import __version__, config
 GUARD_MIN_GAP = 120  # 秒。两次崩溃间隔小于它就只上报不退出
 MARKER = "last-crash.json"
 MAX_TEXT = 8000
+
+
+def utf8_safe(text: str) -> str:
+    """把 utf-8 编不出来的字符（孤代理，来自 Windows API / 奇怪文件名）换成 ?
+
+    为什么非做不可：带孤代理的字符串写文件时会先把文件截成 0 字节，
+    再在 flush 时抛 UnicodeEncodeError —— 桌面上只剩一个空日志，
+    现场的人拷走啥也看不到，等于这次崩溃白报了。
+    """
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        return text.encode("utf-8", "replace").decode("utf-8")
 
 
 def desktop_dir() -> Path:
@@ -96,20 +111,47 @@ def build_text(kind: str, message: str, detail: str) -> str:
         "",
         "这条也会发给服务端。桌面上留这份是方便现场直接拷走。",
     ]
-    return "\n".join(lines) + "\n"
+    return utf8_safe("\n".join(lines)) + "\n"
 
 
 def write_desktop_log(text: str) -> Path | None:
-    """在桌面写一份日志。写不进去就算了（桌面可能是只读/重定向的）"""
+    """在桌面写一份日志。写不进去就算了（桌面可能是只读/重定向的）
+
+    先写 .part 再改名：半路被结束进程/断电时，桌面上只会多一个 .part，
+    不会留下一个看着像日志、打开却啥也没有的空文件。
+    """
+    target = desktop_dir()
+    tmp = None
     try:
-        target = desktop_dir()
         target.mkdir(parents=True, exist_ok=True)
         name = f"Mythclass出错日志-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
         path = target / name
-        path.write_text(text, encoding="utf-8")
+        tmp = target / (name + ".part")
+        with tmp.open("w", encoding="utf-8", errors="replace") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
         return path
     except Exception:
+        try:
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
         return None
+
+
+def append_to_app_log(text: str) -> None:
+    """同样的内容再往 %APPDATA%\\Mythclass\\client.log 塞一份
+
+    桌面上那份可能写不进去（桌面被重定向、被杀进程打断），
+    这份跟着主日志走，更新前后都在，远程也捞得到。
+    """
+    try:
+        config.ensure_dirs()
+        with (config.APP_DIR / "client.log").open("a", encoding="utf-8", errors="replace") as handle:
+            handle.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 崩溃上报\n{text}\n")
+    except Exception:
+        pass
 
 
 def send_to_server(kind: str, message: str, detail: str) -> bool:
@@ -141,16 +183,28 @@ def send_to_server(kind: str, message: str, detail: str) -> bool:
 
 
 def report(kind: str, message: str, detail: str = "", fatal: bool = True) -> None:
-    """上报 + 写桌面日志；（该退出时）退出"""
+    """上报 + 写日志；（该退出时）退出
+
+    顺序是有讲究的：先把三份记录落地，再上网报告。
+    （更新的时候进程随时可能被安装器/新版客户端收掉 ——
+    先报告再写日志的话，日志就没了，等于这次崩溃白报。）
+    """
     text = build_text(kind, message, detail)
+    recent = _recent_crash()  # 先判断：这是头一回崩，还是刚崩完又崩
     path = write_desktop_log(text)
+    append_to_app_log(text)  # 桌面那份写不进去时，主日志里还有一份
+
+    if fatal and not recent:
+        # 防自锁的标记也提前写：网络慢的时候被收掉，标记晚写就等于没写
+        _mark_crash()
+
     sent = send_to_server(kind, message, detail)
 
     # 控制台可能是不支持这些字符的老编码，别让「上报」这件事本身再炸一次
     try:
         print(
             f"[Mythclass] {kind}：{message}"
-            + (f" | 日志：{path}" if path else "")
+            + (f" | 日志：{path}" if path else " | 日志写不出去")
             + (" | 已上报服务端" if sent else " | 上报失败"),
             file=sys.stderr,
         )
@@ -164,11 +218,10 @@ def report(kind: str, message: str, detail: str = "", fatal: bool = True) -> Non
         return
 
     # 短时间内的第二次崩溃就不再退出了，免得崩→重启→再崩
-    if _recent_crash():
+    if recent:
         print("[Mythclass] 刚崩过不久，这次不再退出，先把能干的活干完。", file=sys.stderr)
         return
 
-    _mark_crash()
     try:
         sys.stdout.flush()
         sys.stderr.flush()
