@@ -69,6 +69,8 @@ class MythclassClient:
         # 局域网直连：老师端在同一个网段时可以直接连这个端口，不走服务器
         # 本地网页：老师在同一局域网时直接打开浏览器就能控制，不经服务器
         self._singleton = None  # 单实例互斥体句柄（活着就一直占着）
+        # 最近做过的请求 id -> 时间：同一条命令被发两遍时只做一遍
+        self._seen_requests: dict[str, float] = {}
         self.web = lanweb.LanWeb(
             trust=trust,
             on_command=self._run_command_sync,
@@ -805,6 +807,33 @@ class MythclassClient:
         command = str(payload.get("command") or "")
         args = payload.get("args") or {}
         request_id = payload.get("requestId") or ""
+
+        # 同一条命令只做一次。
+        # 教室网络一抖，服务器上可能同时挂着这台机器的几条旧连接，
+        # 一条命令就被发过来好几遍 —— 老师看到的是同一个通知弹了四五次，
+        # 而每弹一次都开一个 tk 窗口，开多了整个进程就"未响应"。
+        if request_id:
+            now = time.time()
+            for rid in [k for k, at in self._seen_requests.items() if now - at > 60]:
+                self._seen_requests.pop(rid, None)
+            if request_id in self._seen_requests:
+                self.log(f"命令 {command}：同一个请求又来了一遍（{request_id}），跳过")
+                # 还是回一条，让老师那边的回执知道"我没重复做"
+                if self.socket:
+                    try:
+                        self.socket.emit(
+                            "command_result",
+                            {
+                                "requestId": request_id,
+                                "command": command,
+                                "ok": True,
+                                "output": "同一条命令又来了一遍，已经做过一次了，这次跳过",
+                            },
+                        )
+                    except Exception:
+                        pass
+                return
+            self._seen_requests[request_id] = now
 
         if command == "screen_start":
             if not self.screen.alive():

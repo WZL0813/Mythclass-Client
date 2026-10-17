@@ -8,6 +8,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import queue
 import subprocess
 import sys
 import tempfile
@@ -99,6 +100,77 @@ def cmd_logout(args: dict) -> tuple[bool, str]:
 
 NOTICE_TITLE = "Mythclass消息通知"
 
+# 同一时刻只许一个通知窗（tkinter 的窗口不能多线程一起开，
+# 一多就"未响应"，任务管理器里能看到好几条 Mythclass消息通知）
+_NOTICE_LOCK = threading.Lock()
+# 一模一样的通知十秒内只弹一次（老师手抖点两下 / 服务端重连发两遍都算）
+_LAST_NOTICE = {"key": "", "at": 0.0}
+NOTICE_SAME_SECONDS = 10.0
+
+# 所有弹窗都在**同一个线程、同一个隐藏的 Tk 宿主**上开（Toplevel）。
+# 为什么：以前是"一个通知一个线程 + 一个 tk.Tk()"，
+# 一条通知被发五遍就是五个 Tk，全挤在一起，任务管理器里直接"未响应"；
+# 而且窗口关掉之后再新建，还容易把这个进程带崩。
+_UI_QUEUE: "queue.Queue" = queue.Queue()
+_UI_THREAD = None
+_UI_HOST = {"root": None}
+
+
+def _ui_worker() -> None:
+    try:
+        root = tk.Tk()
+    except Exception:
+        return
+    root.withdraw()  # 只当宿主，自己不出场
+    try:
+        root.title("Mythclass")
+    except Exception:
+        pass
+    _UI_HOST["root"] = root
+
+    def pump() -> None:
+        while True:
+            try:
+                job = _UI_QUEUE.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                job(root)
+            except Exception:
+                pass
+        try:
+            root.after(60, pump)
+        except Exception:
+            pass
+
+    try:
+        root.after(60, pump)
+        root.mainloop()
+    finally:
+        _UI_HOST["root"] = None
+
+
+def _ui_thread() -> None:
+    global _UI_THREAD
+    if _UI_THREAD is not None and _UI_THREAD.is_alive():
+        return
+    _UI_THREAD = threading.Thread(target=_ui_worker, name="mythclass-ui", daemon=True)
+    _UI_THREAD.start()
+    # 等宿主建好（最多两秒），免得第一条通知排进去没人接
+    for _ in range(40):
+        if _UI_HOST["root"] is not None:
+            return
+        time.sleep(0.05)
+
+
+def _ui_post(job) -> bool:
+    """把"开个窗"这件事交给 UI 线程去做"""
+    _ui_thread()
+    if _UI_HOST["root"] is None:
+        return False
+    _UI_QUEUE.put(job)
+    return True
+
 
 def _notice_options(raw) -> list[dict]:
     """把教师端传来的选项规整成最多三个按钮
@@ -184,7 +256,18 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
     box: dict = {"answer": None}
     done = threading.Event() if wait else None
 
-    def show() -> None:
+    # 一模一样的通知刚弹过就别再弹了（老师那边网络一抖、命令被发两遍是常事）
+    notice_key = f"{title}\n{body}\n{auto_close}"
+    now = time.time()
+    if _LAST_NOTICE["key"] == notice_key and now - _LAST_NOTICE["at"] < NOTICE_SAME_SECONDS:
+        return True, "这条通知刚弹过，没再弹一遍"
+    if not _NOTICE_LOCK.acquire(blocking=False):
+        # 上一条还挂在屏幕上。再开一个 tk 窗口会把这个进程拖成"未响应"
+        return True, "上一条通知还开着，这条先不弹"
+    _LAST_NOTICE["key"] = notice_key
+    _LAST_NOTICE["at"] = now
+
+    def show(host) -> None:
         # 语音播报：先念出来（异步，不挡窗口），再弹通知
         if speak_on:
             try:
@@ -217,7 +300,7 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
         except Exception:
             pass
 
-        root = tk.Tk()
+        root = tk.Toplevel(host)
         # 窗口标题固定，不跟着内容变（主人要求）
         root.title(NOTICE_TITLE)
         if topmost:
@@ -402,9 +485,26 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
 
             tick()
 
-        root.mainloop()
+        # 这里是 UI 线程里跑的：用 wait_window 等这个窗关掉，
+        # 不能再来一次 mainloop（宿主那层已经在跑了）
+        root.wait_window(root)
 
-    threading.Thread(target=show, daemon=True).start()
+    def run_notice(host) -> None:
+        try:
+            show(host)
+        finally:
+            # 窗口关了才放行下一条
+            try:
+                _NOTICE_LOCK.release()
+            except RuntimeError:
+                pass
+
+    if not _ui_post(run_notice):
+        try:
+            _NOTICE_LOCK.release()
+        except RuntimeError:
+            pass
+        return False, "弹窗线程没起来"
 
     if not wait:
         return True, "通知已弹出，等他回答"
@@ -647,19 +747,36 @@ def cmd_screen_broadcast(args: dict) -> tuple[bool, str]:
     if not url:
         return False, "没给广播地址"
 
-    def show():
-        root = tk.Tk()
+    def show(host):
+        root = tk.Toplevel(host)
         root.attributes("-fullscreen", True)
         root.configure(bg="#10160f")
         label = tk.Label(root, text="屏幕广播中\n按 Esc 退出", bg="#10160f", fg="#f3efe3", font=("Microsoft YaHei", 26))
         label.pack(expand=True)
         tk.Button(root, text="打开广播内容", command=lambda: os.startfile(url)).pack(pady=10)
         root.bind("<Escape>", lambda _e: root.destroy())
-        root.mainloop()
+        # UI 线程里不能再来一次 mainloop
+        root.wait_window(root)
 
-    import threading
+    # 广播窗也占同一个"一次只开一个 tk 窗"的名额，免得和通知窗撞车
+    if not _NOTICE_LOCK.acquire(blocking=False):
+        return True, "已经有一个窗口开着（通知或广播），这次先不开"
 
-    threading.Thread(target=show, name="mythclass-broadcast", daemon=True).start()
+    def run_broadcast(host) -> None:
+        try:
+            show(host)
+        finally:
+            try:
+                _NOTICE_LOCK.release()
+            except RuntimeError:
+                pass
+
+    if not _ui_post(run_broadcast):
+        try:
+            _NOTICE_LOCK.release()
+        except RuntimeError:
+            pass
+        return False, "弹窗线程没起来"
     return True, "广播已经开起来"
 
 
