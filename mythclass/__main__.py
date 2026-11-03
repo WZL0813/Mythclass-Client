@@ -857,7 +857,34 @@ class MythclassClient:
                 except Exception as err:
                     self.log(f"回传通知回答失败：{err}", logging.WARNING)
 
-            ok, output = cmd_message(args, on_reply=_reply)
+            def _shot(rid=request_id) -> None:
+                """窗口真弹出来了 —— 抓一张小图回传，老师那边能看见它弹开了"""
+                if not rid:
+                    return
+                try:
+                    from .monitors import grab_thumbnail
+
+                    data = grab_thumbnail(max_width=720, quality=55)
+                except Exception as err:
+                    self.log(f"通知回传截图失败：{err}", logging.WARNING)
+                    return
+                if not data or not self.socket:
+                    return
+                try:
+                    self.socket.emit(
+                        "command_result",
+                        {
+                            "requestId": f"{rid}-shot",
+                            "command": "notice_shot",
+                            "ok": True,
+                            "output": data,
+                        },
+                    )
+                    self.log("已回传通知窗口截图")
+                except Exception as err:
+                    self.log(f"通知截图没发出去：{err}", logging.WARNING)
+
+            ok, output = cmd_message(args, on_reply=_reply, on_shown=_shot)
         elif command == "request_frame":
             threading.Thread(target=self._send_thumb, args=(args,), daemon=True).start()
             ok, output = True, "给你抓了张小图"

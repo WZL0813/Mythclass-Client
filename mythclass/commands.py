@@ -210,7 +210,7 @@ def _int_or(value, fallback: int, low: int, high: int) -> int:
 _FIT_STEPS = (1.0, 1.15, 1.3, 1.5, 1.7, 1.95, 2.2, 2.5, 2.85, 3.2, 3.6, 4.0)
 
 
-def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, str]:
+def cmd_message(args: dict, on_reply=None, wait: bool = False, on_shown=None) -> tuple[bool, str]:
     """弹一条通知。
 
     能自定义：窗口大小、标题/内容/按钮的字号、自适应最大、
@@ -484,6 +484,25 @@ def cmd_message(args: dict, on_reply=None, wait: bool = False) -> tuple[bool, st
                     pass
 
             tick()
+
+        # 窗口真画出来了 —— 告诉调用方一声（教师端的「独立页面」要拿一张截图当凭据）
+        if on_shown is not None:
+            fired = {"done": False}
+
+            def tell() -> None:
+                if fired["done"]:
+                    return
+                fired["done"] = True
+                try:
+                    on_shown()
+                except Exception:
+                    pass
+
+            try:
+                root.update_idletasks()
+                root.after(450, tell)
+            except Exception:
+                pass
 
         # 这里是 UI 线程里跑的：用 wait_window 等这个窗关掉，
         # 不能再来一次 mainloop（宿主那层已经在跑了）
