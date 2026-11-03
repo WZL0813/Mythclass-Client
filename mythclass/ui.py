@@ -281,9 +281,24 @@ class SettingsWindow:
 
         tk.Label(frame, text="连接顺序：官方优先，然后按下面顺序试。官方删不掉。", bg=BG, fg=MOSS, wraplength=520, justify="left").pack(anchor="w")
 
-        self.server_list = tk.Listbox(frame, height=6, font=("Consolas", 10))
+        self.server_list = tk.Listbox(frame, height=7, font=("Consolas", 10))
         self.server_list.pack(fill="x", pady=10)
+        self._latency: dict = {}
         self._refresh_servers()
+
+        # 测一下每条线路的延迟：官方那几条一键就看得出谁快
+        probe_bar = tk.Frame(frame, bg=BG)
+        probe_bar.pack(fill="x", pady=(0, 8))
+        self.probe_button = tk.Button(
+            probe_bar, text="测延迟", command=self._probe_latency,
+            bg="#d8d2c2", fg=INK, relief="flat", padx=14, pady=4, cursor="hand2",
+        )
+        self.probe_button.pack(side="left")
+        self.server_latency_note = tk.Label(
+            probe_bar, text="点一下，看看现在哪条线路最快。", bg=BG, fg=MOSS,
+            font=("Microsoft YaHei", 9), anchor="w",
+        )
+        self.server_latency_note.pack(side="left", padx=10)
 
         add = tk.Frame(frame, bg=BG)
         add.pack(fill="x")
@@ -301,7 +316,43 @@ class SettingsWindow:
         self.server_list.delete(0, tk.END)
         for s in self.cfg.get("servers", []):
             tag = "官方" if s.get("official") else ("启用" if s.get("enabled", True) else "停用")
-            self.server_list.insert(tk.END, f"[{tag}] {s.get('name', '')} · {s.get('url', '')}")
+            lat = getattr(self, "_latency", {}).get((s.get("url") or "").strip())
+            ms = ""
+            if lat is not None:
+                ms = " · 不通" if lat is False else f" · {lat}ms"
+            self.server_list.insert(tk.END, f"[{tag}] {s.get('name', '')} · {s.get('url', '')}{ms}")
+
+    def _probe_latency(self) -> None:
+        """量一遍所有启用线路的延迟，顺手把结果写在列表里"""
+        from . import latency as latency_mod
+
+        urls = [u for u in config.enabled_servers(self.cfg)]
+        if not urls:
+            return messagebox.showwarning("没线路", "一条启用的线路都没有。", parent=self.root)
+        try:
+            self.probe_button.configure(state="disabled", text="测着呢…")
+            self.server_latency_note.configure(text="正在测…")
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+        lat = latency_mod.measure(urls)
+        # False 表示不通（列表里好区分）
+        self._latency = {url: (ms if ms is not None else False) for url, ms in lat.items()}
+        self._refresh_servers()
+
+        ok = {u: ms for u, ms in lat.items() if ms is not None}
+        best = min(ok, key=ok.get) if ok else None
+        if best:
+            self.server_latency_note.configure(
+                text=f"最快：{best.split('//')[-1]}（{ok[best]}ms） —— 启动时就会先用它"
+            )
+        else:
+            self.server_latency_note.configure(text="一条都不通，检查一下网络。")
+        try:
+            self.probe_button.configure(state="normal", text="测延迟")
+        except Exception:
+            pass
 
     def _add_server(self) -> None:
         url = self.vars["newUrl"].get().strip()

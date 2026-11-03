@@ -221,10 +221,24 @@ class MythclassClient:
     # ------------------------------ 连接 ------------------------------
 
     def _connect_loop(self) -> None:
-        """按官方 → 自定义的顺序挨个试，全挂了就等一会儿再来"""
+        """先测一遍延迟，从最快的那条开始试；全挂了就等一会儿再来"""
         backoff = 5
         while not self._stop.is_set():
-            for url in config.enabled_servers(self.cfg):
+            urls = config.enabled_servers(self.cfg)
+            if len(urls) > 1:
+                # 主人要的：启动先 ping 一遍，哪条快先用哪条
+                try:
+                    from . import latency as latency_mod
+
+                    ordered, lat = latency_mod.fastest(urls)
+                    self.log(f"线路延迟：{latency_mod.describe(lat)}")
+                    if ordered and lat.get(ordered[0]) is not None:
+                        self.log(f"这条最快，先用它：{ordered[0]}（{lat[ordered[0]]}ms）")
+                    urls = ordered
+                except Exception as err:
+                    self.log(f"测线路延迟失败（按原顺序试）：{err}", logging.WARNING)
+
+            for url in urls:
                 if self._stop.is_set():
                     return
                 try:

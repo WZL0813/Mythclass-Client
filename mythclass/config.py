@@ -20,19 +20,39 @@ CONFIG_FILE = APP_DIR / "config.json"
 DB_FILE = APP_DIR / "records.db"
 LOG_FILE = APP_DIR / "client.log"
 
-OFFICIAL_SERVER = "wss://mythclassapi.ryokuryuneko.top"
+OFFICIAL_SERVERS = [
+    "wss://mythclassapi.ryokuryuneko.top",
+    "wss://mythclassapi-uk.ryokuryuneko.top",
+    "wss://mythclassapi-it.ryokuryuneko.top",
+    "wss://mythclassapi-cf.ryokuryuneko.top",
+]
+
+# 自建/自测的时候可以把官方那几条换成自己的（逗号分隔），平时不用管
+_override = (os.environ.get("MYTHCLASS_OFFICIAL_LINES") or "").strip()
+if _override:
+    OFFICIAL_SERVERS = [u.strip() for u in _override.split(",") if u.strip()] or OFFICIAL_SERVERS
+
+OFFICIAL_SERVER = OFFICIAL_SERVERS[0]  # 老代码还在用这个名字
+
+OFFICIAL_LABELS = {
+    "wss://mythclassapi.ryokuryuneko.top": "官方服务器（主线路，不可删除）",
+    "wss://mythclassapi-uk.ryokuryuneko.top": "官方线路 · 英国（不可删除）",
+    "wss://mythclassapi-it.ryokuryuneko.top": "官方线路 · 意大利（不可删除）",
+    "wss://mythclassapi-cf.ryokuryuneko.top": "官方线路 · Cloudflare（不可删除）",
+}
 
 DEFAULTS = {
     "clientUid": "",
     "clientName": "教室一体机",
     "servers": [
         {
-            "name": "官方服务器（不可删除）",
-            "url": OFFICIAL_SERVER,
-            "remark": "内置，永远保留",
+            "name": OFFICIAL_LABELS.get(url, "官方线路" + ("" if i == 0 else f"备用{i}") + "（不可删除）"),
+            "url": url,
+            "remark": "内置，永远保留" if i == 0 else "内置备用线路",
             "enabled": True,
             "official": True,
         }
+        for i, url in enumerate(OFFICIAL_SERVERS)
     ],
     "adminPasswordHash": "",       # 由 security.hash_password 生成，迁移时补齐
     "requirePasswordChange": True,
@@ -86,16 +106,29 @@ def _migrate_password(cfg: dict) -> bool:
 def _merge_defaults(data: dict) -> dict:
     merged = dict(DEFAULTS)
     merged.update(data or {})
-    # 官方服务器永远在，且永远启用
-    servers = [s for s in merged.get("servers", []) if isinstance(s, dict)]
-    has_official = any(s.get("official") or s.get("url") == OFFICIAL_SERVER for s in servers)
-    if not has_official:
-        servers.insert(0, dict(DEFAULTS["servers"][0]))
-    for s in servers:
-        if s.get("official") or s.get("url") == OFFICIAL_SERVER:
-            s["official"] = True
-            s["enabled"] = True
-            s.setdefault("name", "官方服务器（不可删除）")
+    # 官方线路永远在、永远启用：主线路 + 英国 + 意大利 + Cloudflare。
+    # 老配置里只有主线路，这里顺手把缺的补上（顺序固定：官方全在前，自定义在后）。
+    raw = [s for s in merged.get("servers", []) if isinstance(s, dict)]
+    by_url = {}
+    extras = []
+    for s in raw:
+        url = (s.get("url") or "").strip()
+        if not url:
+            continue
+        if url in OFFICIAL_SERVERS:
+            by_url[url] = dict(s)
+        else:
+            extras.append(s)
+
+    servers = []
+    for url in OFFICIAL_SERVERS:
+        item = by_url.get(url) or {"url": url}
+        item["official"] = True
+        item["enabled"] = True
+        item.setdefault("name", OFFICIAL_LABELS.get(url, "官方服务器"))
+        item.setdefault("remark", "内置，永远保留" if url == OFFICIAL_SERVER else "内置备用线路")
+        servers.append(item)
+    servers.extend(extras)
     merged["servers"] = servers
     return merged
 
@@ -154,14 +187,25 @@ def ensure_client_uid(cfg: dict) -> str:
 
 
 def enabled_servers(cfg: dict) -> list[str]:
-    """按顺序给出要试的服务器地址：官方优先，然后自定义。"""
+    """按顺序给出要试的服务器地址：官方几条优先，然后自定义。"""
     order = []
-    for s in cfg.get("servers", []):
-        if not s.get("enabled", True):
-            continue
-        url = (s.get("url") or "").strip()
+    servers = [s for s in cfg.get("servers", []) if isinstance(s, dict)]
+
+    def add(url: str) -> None:
+        url = (url or "").strip()
         if url and url not in order:
             order.append(url)
+
+    # 官方先来（顺序固定），这样哪条线路先试是确定的
+    by_url = {(s.get("url") or "").strip(): s for s in servers}
+    for url in OFFICIAL_SERVERS:
+        item = by_url.get(url)
+        if item and item.get("enabled", True):
+            add(url)
+    for s in servers:
+        if not s.get("enabled", True):
+            continue
+        add((s.get("url") or "").strip())
     return order
 
 
