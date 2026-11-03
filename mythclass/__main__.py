@@ -872,31 +872,47 @@ class MythclassClient:
                     self.log(f"回传通知回答失败：{err}", logging.WARNING)
 
             def _shot(rid=request_id) -> None:
-                """窗口真弹出来了 —— 抓一张小图回传，老师那边能看见它弹开了"""
+                """窗口真弹出来了 —— 抓一张小图回传，老师那边能看见它弹开了
+
+                两条路都走：socket 那条快（老师一订阅就到），
+                HTTP 那条（/api/client/command-result）是兜底 ——
+                socket 中转断了的时候，靠它也能把图送到老师的页面上。
+                图压小一点（480 宽），HTTP 那条 20000 字的限制才装得下。
+                """
                 if not rid:
                     return
                 try:
                     from .monitors import grab_thumbnail
 
-                    data = grab_thumbnail(max_width=720, quality=55)
+                    data = grab_thumbnail(max_width=480, quality=45)
                 except Exception as err:
                     self.log(f"通知回传截图失败：{err}", logging.WARNING)
                     return
-                if not data or not self.socket:
+                if not data:
                     return
+                sent = False
                 try:
-                    self.socket.emit(
-                        "command_result",
-                        {
-                            "requestId": f"{rid}-shot",
-                            "command": "notice_shot",
-                            "ok": True,
-                            "output": data,
-                        },
-                    )
-                    self.log("已回传通知窗口截图")
+                    if self.socket:
+                        self.socket.emit(
+                            "command_result",
+                            {
+                                "requestId": f"{rid}-shot",
+                                "command": "notice_shot",
+                                "ok": True,
+                                "output": data,
+                            },
+                        )
+                        sent = True
                 except Exception as err:
-                    self.log(f"通知截图没发出去：{err}", logging.WARNING)
+                    self.log(f"通知截图 socket 没发出去（改走 HTTP）：{err}", logging.WARNING)
+                try:
+                    if self.api:
+                        self.api.command_result(f"{rid}-shot", "notice_shot", True, data, limit=20000)
+                        sent = True
+                except Exception as err:
+                    self.log(f"通知截图 HTTP 也没发出去：{err}", logging.WARNING)
+                if sent:
+                    self.log("已回传通知窗口截图")
 
             ok, output = cmd_message(args, on_reply=_reply, on_shown=_shot)
         elif command == "request_frame":

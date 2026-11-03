@@ -194,11 +194,16 @@ class ServerApi:
         except requests.RequestException:
             return False
 
-    def command_result(self, request_id: str, command: str, ok: bool, output: str) -> None:
+    def command_result(self, request_id: str, command: str, ok: bool, output: str, limit: int = 20000) -> None:
+        """把命令结果回传给老师（HTTP 这条是兜底：socket 那条断了也还能送到）
+
+        limit 别太小：设置清单那种 JSON 有两三千字，截断以后老师那边解析不出来，
+        就会报"拉不到设置"。服务端那边是 20000，这里跟着走。
+        """
         try:
             self.session.post(
                 f"{self.base}/api/client/command-result",
-                json={"requestId": request_id, "command": command, "ok": ok, "output": output[:1500]},
+                json={"requestId": request_id, "command": command, "ok": ok, "output": output[:limit]},
                 headers=self._headers(),
                 timeout=DEFAULT_TIMEOUT,
             )
